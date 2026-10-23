@@ -50,14 +50,44 @@ def tf(*args: str, cwd: Path = TF_DIR) -> subprocess.CompletedProcess:
     )
 
 
-@needs_terraform
-def test_terraform_validate():
-    init = tf("init", "-backend=false", "-input=false", "-no-color")
+def init_or_skip(*args: str, cwd: Path = TF_DIR) -> None:
+    init = tf("init", "-input=false", "-no-color", *args, cwd=cwd)
     if init.returncode != 0:
         output = (init.stdout + init.stderr).lower()
         if any(hint in output for hint in NETWORK_HINTS):
             pytest.skip(f"terraform init needs network: {init.stderr.strip()}")
     assert init.returncode == 0, init.stdout + init.stderr
+
+
+def module_console(tmp_path: Path, expr: str, **variables: str) -> subprocess.CompletedProcess:
+    """Evaluate expr in a copy of the module with a local backend (console needs one)."""
+    init_or_skip("-backend=false")
+    work = tmp_path / "module"
+    shutil.copytree(TF_DIR, work, ignore=shutil.ignore_patterns("terraform.tfstate*"))
+    (work / "backend_override.tf").write_text('terraform {\n  backend "local" {}\n}\n')
+    init_or_skip(cwd=work)
+    base = {
+        "repo": "o/r",
+        "issue_number": "1",
+        "template_ref": "main",
+        "do_token": "x",
+        "claude_oauth_token": "x",
+        "github_token": "x",
+    }
+    base.update(variables)
+    var_args = [arg for k, v in base.items() for arg in ("-var", f"{k}={v}")]
+    return subprocess.run(
+        ["terraform", f"-chdir={work}", "console", "-no-color", *var_args],
+        input=f"{expr}\n",
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+@needs_terraform
+def test_terraform_validate():
+    init_or_skip("-backend=false")
     validate = tf("validate", "-no-color")
     assert validate.returncode == 0, validate.stdout + validate.stderr
     fmt = tf("fmt", "-check", "-recursive")
@@ -117,3 +147,27 @@ def test_cloud_init_preserves_awkward_tokens(tmp_path):
     joined = "\n".join(commands)
     assert "https://github.com/o/agentic-blacksmith/archive/v1.2.3.tar.gz" in joined
     assert "bash /opt/blacksmith/agent/bootstrap.sh" in joined
+
+
+@needs_terraform
+def test_repo_slug_is_a_valid_digitalocean_name(tmp_path):
+    result = module_console(tmp_path, "local.repo_slug", repo="Owner/my_repo.site")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == '"owner-my-repo-site"'
+
+
+@needs_terraform
+@pytest.mark.parametrize(
+    ("variables", "message"),
+    [
+        ({"issue_number": "1.5"}, "issue_number must be a positive whole number"),
+        ({"lifetime_hours": "2.5"}, "lifetime_hours must be a whole number"),
+        ({"repo": "owner/bad name"}, "repo must be owner/name"),
+    ],
+)
+def test_variable_validation_rejects(tmp_path, variables, message):
+    result = module_console(tmp_path, "local.repo_slug", **variables)
+    # console exits 0 for some validation failures, so check the diagnostic itself
+    output = " ".join((result.stdout + result.stderr).split())
+    assert "Invalid value for variable" in output
+    assert message in output

@@ -1,5 +1,6 @@
 locals {
-  repo_slug = replace(lower(var.repo), "/", "-")
+  # DigitalOcean names and tags only take [a-z0-9-] here, so "_" and "." become "-".
+  repo_slug = trim(replace(lower(var.repo), "/[^a-z0-9-]+/", "-"), "-")
   name      = "blacksmith-${local.repo_slug}-issue-${var.issue_number}"
 
   # KEY=value files read by agent/bootstrap.sh. Values are written verbatim inside a YAML

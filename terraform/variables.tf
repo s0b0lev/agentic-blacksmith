@@ -9,8 +9,8 @@ variable "repo" {
   type        = string
 
   validation {
-    condition     = can(regex("^[^/]+/[^/]+$", var.repo))
-    error_message = "repo must look like owner/name."
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.repo))
+    error_message = "repo must be owner/name using only letters, digits, '_', '.' and '-'."
   }
 }
 
@@ -19,8 +19,8 @@ variable "issue_number" {
   type        = number
 
   validation {
-    condition     = var.issue_number > 0
-    error_message = "issue_number must be a positive number."
+    condition     = var.issue_number > 0 && floor(var.issue_number) == var.issue_number
+    error_message = "issue_number must be a positive whole number."
   }
 }
 
@@ -102,7 +102,7 @@ variable "lifetime_hours" {
   default     = 168
 
   validation {
-    condition     = var.lifetime_hours >= 1
-    error_message = "lifetime_hours must be at least 1."
+    condition     = var.lifetime_hours >= 1 && floor(var.lifetime_hours) == var.lifetime_hours
+    error_message = "lifetime_hours must be a whole number of at least 1."
   }
 }

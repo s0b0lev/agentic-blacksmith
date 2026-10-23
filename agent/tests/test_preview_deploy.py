@@ -1,4 +1,5 @@
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -76,7 +77,6 @@ def _run(cfg, ctx, fake_runner, status=lambda url, auth: 200, **kw):
 def _base(cfg, ctx):
     return [
         "docker", "compose", "-p", cfg.preview.project,
-        "--project-directory", str(ctx.repo_root),
         "-f", str(ctx.repo_root / cfg.preview.compose),
         "-f", str(ctx.work_dir / "compose.override.yml"),
     ]  # fmt: skip
@@ -91,8 +91,8 @@ def test_deploy_command_sequence_jim_scale(cfg, ctx, fake_runner):
     override = str(ctx.work_dir / "compose.override.yml")
     seed = (
         "export COMPOSE_PROJECT_NAME=blacksmith-preview "
-        f"COMPOSE_FILE={compose}:{override} COMPOSE_PATH_SEPARATOR=: "
-        f"&& cd {ctx.repo_root} && {cfg.preview.seed}"
+        f"COMPOSE_FILE={shlex.quote(compose + ':' + override)} COMPOSE_PATH_SEPARATOR=: "
+        f"&& cd {shlex.quote(str(ctx.repo_root / 'ops'))} && {cfg.preview.seed}"
     )
     assert fake_runner.calls == [
         ["docker", "run", "--rm", "caddy:2", "caddy", "hash-password",
@@ -102,7 +102,7 @@ def test_deploy_command_sequence_jim_scale(cfg, ctx, fake_runner):
         base + ["up", "-d", "--build", "--wait"],
     ]  # fmt: skip
     assert all(k["cwd"] == ctx.repo_root for k in fake_runner.kwargs)
-    assert [k.get("timeout") for k in fake_runner.kwargs] == [None, 1800, 900, 1800]
+    assert [k.get("timeout") for k in fake_runner.kwargs] == [300, 1800, 900, 1800]
     for call in fake_runner.calls:
         if "-p" in call:
             assert call[call.index("-p") + 1] == "blacksmith-preview"
@@ -122,8 +122,12 @@ def test_seed_runs_before_app_services(cfg, ctx, fake_runner):
 
 
 def test_env_written_next_to_compose_file(cfg, ctx, fake_runner):
+    # Compose's project directory is the compose file's directory (ops/), so
+    # .env lives there. bootstrap's `.env` line in .git/info/exclude has no
+    # slash, so like a gitignore pattern it matches ops/.env at any depth.
     result = _run(cfg, ctx, fake_runner)
-    env_path = ctx.repo_root / ".env"
+    assert not (ctx.repo_root / ".env").exists()
+    env_path = ctx.repo_root / "ops" / ".env"
     text = env_path.read_text()
     assert "SECRET_KEY='rnd'" in text
     assert f"MINIO_PUBLIC_URL='https://{HOST}/media/product-images'" in text
@@ -211,3 +215,86 @@ def test_deploy_refuses_dependency_on_dropped_service(cfg, ctx, fake_runner):
     assert result.error == "service 'worker' depends_on dropped service 'minio-init'"
     assert result.diagnostics == ""
     assert fake_runner.calls == []
+
+
+def test_override_build_contexts_are_absolute(cfg, ctx, fake_runner):
+    _run(cfg, ctx, fake_runner)
+    text = (ctx.work_dir / "compose.override.yml").read_text()
+    contexts = [line.split(":", 1)[1].strip() for line in text.splitlines()
+                if line.strip().startswith("context:")]
+    assert contexts and all(Path(c).is_absolute() for c in contexts)
+    assert str(ctx.repo_root / "api") in contexts
+
+
+def test_seed_failure_returns_diagnostics(cfg, ctx, fake_runner):
+    base = _base(cfg, ctx)
+    fake_runner.responses["bash -lc"] = CommandResult(3, "", "seed exploded")
+    fake_runner.responses[" ".join(base + ["ps"])] = CommandResult(0, "PS-OUT", "")
+    fake_runner.responses[" ".join(base + ["logs"])] = CommandResult(0, "LOG-OUT", "")
+    result = _run(cfg, ctx, fake_runner)
+    assert result.ok is False
+    assert result.error == "seed failed (exit 3)"
+    assert "== seed ==\nseed exploded" in result.diagnostics
+    assert "PS-OUT" in result.diagnostics and "LOG-OUT" in result.diagnostics
+    assert base + ["up", "-d", "--build", "--wait"] not in fake_runner.calls
+    assert not (ctx.work_dir / "preview.json").exists()
+
+
+def test_final_up_failure_returns_diagnostics(cfg, ctx, fake_runner):
+    base = _base(cfg, ctx)
+    fake_runner.responses[" ".join(base + ["up", "-d", "--build", "--wait"]) + " db"] = (
+        CommandResult(0, "", "")
+    )
+    fake_runner.responses[" ".join(base + ["up", "-d", "--build", "--wait"])] = (
+        CommandResult(1, "", "api build failed")
+    )
+    fake_runner.responses[" ".join(base + ["ps"])] = CommandResult(0, "PS-OUT", "")
+    fake_runner.responses[" ".join(base + ["logs"])] = CommandResult(0, "LOG-OUT", "")
+    result = _run(cfg, ctx, fake_runner)
+    assert result.ok is False
+    assert result.error == "up failed (exit 1)"
+    assert "== up ==\napi build failed" in result.diagnostics
+    assert "PS-OUT" in result.diagnostics and "LOG-OUT" in result.diagnostics
+    assert any(c[0] == "bash" for c in fake_runner.calls)  # seed ran first
+
+
+def test_second_deploy_reuses_env_values_and_auth(cfg, ctx, fake_runner):
+    fake_runner.responses["docker run"] = CommandResult(0, "HASH\n", "")
+    counter = iter(range(100))
+
+    def rand():
+        return f"r{next(counter)}"
+
+    def deploy_once():
+        clock = Clock()
+        return deploy(cfg, ctx, fake_runner, http_get=lambda u, a: 200,
+                      sleep=clock.sleep, clock=clock, rand=rand)
+
+    first = deploy_once()
+    env1 = (ctx.repo_root / "ops/.env").read_text()
+    caddy1 = (ctx.work_dir / "Caddyfile").read_text()
+    calls_before = len(fake_runner.calls)
+    second = deploy_once()
+    assert first.ok and second.ok
+    assert (ctx.repo_root / "ops/.env").read_text() == env1
+    assert (ctx.work_dir / "Caddyfile").read_text() == caddy1
+    assert second.auth == first.auth
+    new_calls = fake_runner.calls[calls_before:]
+    assert not any(c[:2] == ["docker", "run"] for c in new_calls)
+    assert not any("--force-recreate" in c for c in new_calls)
+    secrets = json.loads((ctx.work_dir / "preview-secrets.json").read_text())
+    assert secrets["auth"] == [first.auth[0], first.auth[1], "HASH"]
+    assert secrets["env_values"] == {"SECRET_KEY": "r1"}
+    assert (ctx.work_dir / "preview-secrets.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_changed_caddyfile_recreates_caddy(cfg, ctx, fake_runner):
+    from dataclasses import replace
+
+    _run(cfg, ctx, fake_runner)
+    assert not any("--force-recreate" in c for c in fake_runner.calls)
+    fake_runner.calls.clear()
+    moved = replace(ctx, host="pr-7.other.example.com")
+    _run(cfg, moved, fake_runner)
+    assert fake_runner.calls[-1] == _base(cfg, ctx) + [
+        "up", "-d", "--no-deps", "--force-recreate", "caddy"]

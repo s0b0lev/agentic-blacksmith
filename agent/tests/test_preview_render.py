@@ -15,6 +15,7 @@ EXAMPLE = Path(__file__).resolve().parents[2] / "examples/sample-shop/blacksmith
 JIM_COMPOSE = Path("/path/to/sample-shop/ops/docker-compose.prod.yml")
 SERVICES = ["db", "minio", "minio-init", "api", "worker", "beat", "admin", "storefront"]
 CADDYFILE = "/srv/app/.blacksmith/Caddyfile"
+REPO = Path("/srv/app")
 
 
 @pytest.fixture
@@ -23,7 +24,7 @@ def preview():
 
 
 def _override(preview):
-    return render_override(preview, SERVICES, caddyfile_path=CADDYFILE)
+    return render_override(preview, SERVICES, caddyfile_path=CADDYFILE, repo_root=REPO)
 
 
 def test_override_resets_ports_for_all_services(preview):
@@ -37,7 +38,7 @@ def test_override_resets_ports_for_all_services(preview):
 
 def test_override_build_replaces_image(preview):
     out = _override(preview)
-    assert "  api:\n    ports: !reset []\n    build:\n      context: api\n    image: !reset null\n" in out
+    assert "  api:\n    ports: !reset []\n    build:\n      context: /srv/app/api\n    image: !reset null\n" in out
 
 
 def test_override_images_map(preview):

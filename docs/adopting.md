@@ -329,14 +329,18 @@ publishes ports 80 and 443 and routes to your services.
   your repository (see section 10).
 - `drop`: services to leave out of the preview. A dropped service must not be a `depends_on`
   target of a kept service, or the preview refuses to start.
-- `env_example`: an example env file copied to `.env` in the repository root. Values that are
-  empty or `change-me`, `changeme` or `CHANGE_ME` are replaced with random strings.
+- `env_example`: an example env file copied to `.env` next to the compose file (compose's
+  project directory: `.env`, `env_file:` entries and relative paths in your compose file
+  resolve there, as they do when you run `docker compose -f <compose>` yourself). Values that
+  are empty or `change-me`, `changeme` or `CHANGE_ME` are replaced with random strings. They
+  are generated once per droplet and reused on every later deploy, so database volumes keep
+  working; the basic-auth password is reused the same way.
 - `env`: values written to `.env` after that, overriding the example. `${PREVIEW_HOST}` is
   replaced with the preview hostname.
 - `infra`: services started first (databases, caches, object storage), before `seed`.
 - `seed`: one shell command run after `infra` and before the app services, for example
-  `docker compose run --rm api python scripts/init_dev_db.py`. `docker compose` inside it
-  targets the preview stack.
+  `docker compose run --rm api python scripts/init_dev_db.py`. It runs in the compose file's
+  directory, and `docker compose` inside it targets the preview stack.
 - `routes` (required): Caddy routes, matched in order. Each has `path` (a Caddy path matcher
   such as `/admin*`) and `to` (a compose `service:port`). Add `rewrite: "/media/* -> /*"` to
   strip a path prefix before proxying.

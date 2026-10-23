@@ -1,4 +1,5 @@
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -122,6 +123,80 @@ def _cmd_self_destruct(conf: dict[str, str], ctx) -> int:
     return 0
 
 
+class UnknownKey(KeyError):
+    pass
+
+
+def config_value(cfg, dotted: str):
+    """Walk dataclass attributes (and mapping keys) of ``cfg`` by a dotted key."""
+    value = cfg
+    for part in dotted.split("."):
+        if dataclasses.is_dataclass(value) and not isinstance(value, type) \
+                and part in {f.name for f in dataclasses.fields(value)}:
+            value = getattr(value, part)
+        elif isinstance(value, Mapping) and part in value:
+            value = value[part]
+        else:
+            raise UnknownKey(dotted)
+    return value
+
+
+def _format_item(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return ""
+    if hasattr(value, "run") and dataclasses.is_dataclass(value):  # a Check
+        return value.run
+    if dataclasses.is_dataclass(value):
+        return json.dumps(dataclasses.asdict(value))
+    return str(value)
+
+
+def format_config_value(value) -> str:
+    """Scalars as text, booleans as true/false, sequences and mappings one item per line."""
+    if isinstance(value, Mapping):
+        return "".join(f"{k}={_format_item(v)}\n" for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return "".join(f"{_format_item(v)}\n" for v in value)
+    if dataclasses.is_dataclass(value) and not hasattr(value, "run"):
+        return json.dumps(dataclasses.asdict(value)) + "\n"
+    return _format_item(value) + "\n"
+
+
+def _cmd_config(conf: dict[str, str], args) -> int:
+    from blacksmith.config import ConfigError, load_config
+
+    path = args.config or Path(conf["REPO_ROOT"]) / conf["CONFIG_PATH"]
+    try:
+        cfg = load_config(path)
+    except ConfigError as exc:
+        print(f"blacksmith.yml is invalid:\n{exc}", file=sys.stderr)
+        return 2
+    try:
+        value = config_value(cfg, args.get)
+    except UnknownKey:
+        print(f"unknown config key: {args.get}", file=sys.stderr)
+        return 3
+    sys.stdout.write(format_config_value(value))
+    return 0
+
+
+def _cmd_fetch_issue(conf: dict[str, str], args) -> int:
+    from blacksmith.stages import write_issue_markdown
+
+    work_dir = Path(conf["REPO_ROOT"]) / ".blacksmith"
+    print(write_issue_markdown(_github(conf), int(conf["ISSUE"]), work_dir))
+    return 0
+
+
+# Commands that run before bootstrap has written the full runner config: they get the
+# parsed arguments instead of a RunContext.
+EARLY_COMMANDS = {
+    "config": (_cmd_config, "print a blacksmith.yml value by dotted key"),
+    "fetch-issue": (_cmd_fetch_issue, "write .blacksmith/issue.md from the GitHub issue"),
+}
+
 COMMANDS = {
     "run": (_cmd_run, "run the first pass: plan, build, preview, verify, design, pr"),
     "preview": (_cmd_preview, "deploy the preview stack only and print preview.json"),
@@ -140,10 +215,19 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command")
     for name, (_, help_text) in COMMANDS.items():
         sub.add_parser(name, help=help_text)
+    cfg_parser = sub.add_parser("config", help=EARLY_COMMANDS["config"][1])
+    cfg_parser.add_argument("--get", required=True, metavar="DOTTED.KEY")
+    cfg_parser.add_argument("--config", type=Path, default=None,
+                            help="blacksmith.yml path (default REPO_ROOT/CONFIG_PATH)")
+    sub.add_parser("fetch-issue", help=EARLY_COMMANDS["fetch-issue"][1])
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
         return 0
+    if args.command in EARLY_COMMANDS:
+        early = args.command == "config" and args.config is not None
+        conf = {} if early else read_config_file(args.config_file)
+        return EARLY_COMMANDS[args.command][0](conf, args)
     conf = read_config_file(args.config_file)
     return COMMANDS[args.command][0](conf, context_from(conf, os.environ))
 

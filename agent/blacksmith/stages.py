@@ -360,6 +360,15 @@ def salvage(cfg, ctx, gh, run, state, env, reason: str) -> None:
             pass
 
 
+def write_issue_markdown(gh: GitHub, issue_number: int, work_dir: Path,
+                         issue: Issue | None = None) -> Path:
+    """Write ``work_dir/issue.md`` (fetching the issue unless given) and return its path."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    path = work_dir / "issue.md"
+    path.write_text(gh.issue_markdown(issue if issue is not None else gh.issue(issue_number)))
+    return path
+
+
 def run_first_pass(
     cfg: Config,
     ctx: RunContext,
@@ -375,9 +384,8 @@ def run_first_pass(
     state_path = ctx.work_dir / "state.json"
     state = load_state(state_path) if state_path.exists() else State(ctx.issue, ctx.branch)
     issue = gh.issue(ctx.issue)
-    issue_md = ctx.work_dir / "issue.md"
-    if not issue_md.exists():
-        issue_md.write_text(gh.issue_markdown(issue))
+    if not (ctx.work_dir / "issue.md").exists():
+        write_issue_markdown(gh, ctx.issue, ctx.work_dir, issue=issue)
     env = PipelineEnv(claude=claude, deploy=deploy, now_iso=now_iso, issue=issue,
                       state_path=state_path)
     try:

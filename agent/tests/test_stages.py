@@ -410,3 +410,12 @@ def test_pr_without_screenshots_pushes_no_assets(tmp_path):
     e = make_env(tmp_path)
     go(e)
     assert not any("blacksmith-assets" in " ".join(c) for c in e.run.calls)
+
+
+def test_write_issue_markdown_creates_work_dir(tmp_path):
+    from blacksmith.stages import write_issue_markdown
+
+    work = tmp_path / "repo" / ".blacksmith"
+    path = write_issue_markdown(FakeGitHub([]), 7, work)
+    assert path == work / "issue.md"
+    assert path.read_text() == "# Scale widget\n"

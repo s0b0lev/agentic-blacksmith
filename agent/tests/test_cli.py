@@ -164,3 +164,70 @@ def test_self_destruct_exit_codes(tmp_path, capsys, monkeypatch):
     capsys.readouterr()
     assert main(["--config-file", str(path), "self-destruct"]) == 1
     assert "dispatch 403" in capsys.readouterr().err
+
+
+def _config_get(*args):
+    return subprocess.run([sys.executable, "-m", "blacksmith", "config", "--get", *args],
+                          cwd=AGENT_DIR, text=True, capture_output=True)
+
+
+def test_config_get_subcommand():
+    proc = _config_get("preview.project", "--config", str(EXAMPLE_YML))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "blacksmith-preview\n"
+
+
+def test_config_get_scalars_and_booleans():
+    assert _config_get("branch_prefix", "--config", str(EXAMPLE_YML)).stdout == "blacksmith/issue-\n"
+    assert _config_get("design.figma", "--config", str(EXAMPLE_YML)).stdout == "true\n"
+    assert _config_get("limits.lifetime_hours", "--config", str(EXAMPLE_YML)).stdout == "168\n"
+
+
+def test_config_get_list_prints_lines():
+    proc = _config_get("setup", "--config", str(EXAMPLE_YML))
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stdout.splitlines()
+    assert len(lines) == 3 and lines[1] == "cd admin && npm ci"
+    checks = _config_get("checks", "--config", str(EXAMPLE_YML)).stdout.splitlines()
+    assert checks[-1] == "cd api && .venv/bin/pytest -q" and len(checks) == 4
+
+
+def test_config_get_unknown_key_exits_3():
+    proc = _config_get("preview.nope", "--config", str(EXAMPLE_YML))
+    assert proc.returncode == 3
+    assert "preview.nope" in proc.stderr and proc.stdout == ""
+
+
+def test_config_get_defaults_to_repo_config(tmp_path, capsys):
+    from blacksmith.__main__ import main
+
+    path = tmp_path / "config"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "blacksmith.yml").write_text(EXAMPLE_YML.read_text())
+    # only the keys cloud-init writes plus REPO_ROOT: no BRANCH or PREVIEW_HOST yet
+    path.write_text(f"ISSUE=7\nREPO=o/r\nCONFIG_PATH=blacksmith.yml\nREPO_ROOT={repo}\n")
+    assert main(["--config-file", str(path), "config", "--get", "preview.auth"]) == 0
+    assert capsys.readouterr().out == "basic\n"
+
+
+def test_fetch_issue_writes_issue_md(tmp_path, capsys, monkeypatch):
+    import blacksmith.__main__ as cli
+    from blacksmith.github import Issue
+
+    class Gh:
+        def issue(self, n):
+            return Issue(n, "T", "B", "alice", (), "open", ())
+
+        def issue_markdown(self, issue):
+            return f"# {issue.title} #{issue.number}\n"
+
+    path = tmp_path / "config"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    path.write_text(f"ISSUE=7\nREPO=o/r\nCONFIG_PATH=blacksmith.yml\nREPO_ROOT={repo}\n")
+    monkeypatch.setattr(cli, "_github", lambda conf: Gh())
+    assert cli.main(["--config-file", str(path), "fetch-issue"]) == 0
+    out = repo / ".blacksmith" / "issue.md"
+    assert capsys.readouterr().out == f"{out}\n"
+    assert out.read_text() == "# T #7\n"

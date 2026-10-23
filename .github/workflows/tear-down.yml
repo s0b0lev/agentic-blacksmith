@@ -59,6 +59,11 @@ on:
 permissions:
   contents: read
 
+# Explicit bash runs with -eo pipefail, so a failing command in a pipe fails the step.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   tear-down:
     runs-on: ubuntu-latest
@@ -180,12 +185,17 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
         run: |
-          if terraform workspace select "issue-$ISSUE"; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          else
+          # A failing list (Spaces outage, rotated keys) fails the step; only a workspace
+          # that is really absent counts as "nothing to destroy".
+          workspaces="$(terraform workspace list)"
+          # `terraform workspace list` prints "  <name>", or "* <name>" for the current one.
+          if ! grep -qxF -e "  issue-$ISSUE" -e "* issue-$ISSUE" <<<"$workspaces"; then
             echo "::notice::no Terraform workspace issue-$ISSUE; nothing to destroy"
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          terraform workspace select "issue-$ISSUE"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Terraform destroy
         if: steps.ws.outputs.skip != 'true'

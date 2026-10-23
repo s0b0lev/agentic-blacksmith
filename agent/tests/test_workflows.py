@@ -82,7 +82,19 @@ def test_adopter_example_uses_pinned_template():
         "s0b0lev/agentic-blacksmith/.github/workflows/tear-down.yml",
     ]
     assert all(u.endswith("@v1") for u in uses), uses
-    assert all(job.get("secrets") == "inherit" for job in jobs.values() if "uses" in job)
+
+
+def test_adopter_example_maps_secrets_explicitly():
+    # `secrets: inherit` only works within one organization or enterprise; the adopter
+    # and the template live in different personal accounts.
+    jobs = _load(ADOPTER)["jobs"]
+    callers = [job for job in jobs.values() if "uses" in job]
+    assert len(callers) == 2
+    for job in callers:
+        secrets = job.get("secrets")
+        assert isinstance(secrets, dict), f"expected an explicit secrets mapping, got {secrets!r}"
+        for name in REQUIRED_SECRETS | {"FIGMA_API_KEY"}:
+            assert secrets.get(name) == f"${{{{ secrets.{name} }}}}", name
 
 
 def test_adopter_example_routes_all_three_events():
@@ -106,6 +118,21 @@ def test_adopter_example_routes_all_three_events():
     resolve = yaml.safe_dump(jobs["resolve"])
     for source in ("github.event.issue.number", "blacksmith/issue-", "client_payload.issue"):
         assert source in resolve, source
+
+
+@pytest.mark.parametrize("path", [SPIN_UP, TEAR_DOWN], ids=lambda p: p.name)
+def test_reusable_workflows_run_bash_with_pipefail(path):
+    assert _load(path).get("defaults", {}).get("run", {}).get("shell") == "bash"
+
+
+def test_tear_down_skips_only_when_workspace_is_absent():
+    steps = _load(TEAR_DOWN)["jobs"]["tear-down"]["steps"]
+    script = next(s["run"] for s in steps if "workspace select" in s.get("run", "")
+                  and "default" not in s["run"])
+    assert "terraform workspace list" in script
+    select = next(line for line in script.splitlines() if "workspace select" in line)
+    assert select.strip() == 'terraform workspace select "issue-$ISSUE"', select
+    assert "||" not in select and not select.lstrip().startswith(("if ", "!"))
 
 
 def test_actionlint():

@@ -59,6 +59,11 @@ on:
 permissions:
   contents: read
 
+# Explicit bash runs with -eo pipefail, so a failing command in a pipe fails the step.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   spin-up:
     runs-on: ubuntu-latest
@@ -232,8 +237,10 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
         run: |
-          echo "ip=$(terraform output -raw ip)" >> "$GITHUB_OUTPUT"
-          echo "preview_url=$(terraform output -raw preview_url)" >> "$GITHUB_OUTPUT"
+          ip="$(terraform output -raw ip)"
+          preview_url="$(terraform output -raw preview_url)"
+          echo "ip=$ip" >> "$GITHUB_OUTPUT"
+          echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
 
       - name: Post issue comment
         if: steps.check.outputs.skip != 'true'
@@ -245,8 +252,9 @@ jobs:
           marker='<!-- blacksmith:spin-up -->'
           body="$(printf 'Blacksmith is working on this. Preview will be at %s. Logs: %s\n\n%s' \
             "$PREVIEW_URL" "$RUN_URL" "$marker")"
-          existing="$(gh api --paginate "repos/$REPO/issues/$ISSUE/comments" \
-            --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -n 1)"
+          ids="$(gh api --paginate "repos/$REPO/issues/$ISSUE/comments" \
+            --jq ".[] | select(.body | contains(\"$marker\")) | .id")"
+          existing="${ids%%$'\n'*}"
           if [ -n "$existing" ]; then
             gh api -X PATCH "repos/$REPO/issues/comments/$existing" -f body="$body" > /dev/null
           else

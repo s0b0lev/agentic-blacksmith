@@ -2,7 +2,8 @@
 # Needs secrets DIGITALOCEAN_TOKEN, SPACES_ACCESS_KEY_ID, SPACES_SECRET_ACCESS_KEY,
 # CLAUDE_CODE_OAUTH_TOKEN, BLACKSMITH_GITHUB_TOKEN (and optionally FIGMA_API_KEY), and
 # variables BLACKSMITH_STATE_BUCKET and BLACKSMITH_PREVIEW_ZONE (may be empty for nip.io).
-# The label below must match `label:` in blacksmith.yml.
+# The label below must match `label:` in blacksmith.yml. Secrets are mapped explicitly:
+# `secrets: inherit` only works within one organization or enterprise.
 name: blacksmith
 
 on:
@@ -21,7 +22,13 @@ jobs:
       issue: ${{ github.event.issue.number }}
       state_bucket: ${{ vars.BLACKSMITH_STATE_BUCKET }}
       preview_zone: ${{ vars.BLACKSMITH_PREVIEW_ZONE }}
-    secrets: inherit
+    secrets:
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      SPACES_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      BLACKSMITH_GITHUB_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+      FIGMA_API_KEY: ${{ secrets.FIGMA_API_KEY }}
 
   resolve:
     if: >-
@@ -63,4 +70,10 @@ jobs:
       issue: ${{ fromJSON(needs.resolve.outputs.issue) }}
       state_bucket: ${{ vars.BLACKSMITH_STATE_BUCKET }}
       preview_zone: ${{ vars.BLACKSMITH_PREVIEW_ZONE }}
-    secrets: inherit
+    secrets:
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      SPACES_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      BLACKSMITH_GITHUB_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+      FIGMA_API_KEY: ${{ secrets.FIGMA_API_KEY }}

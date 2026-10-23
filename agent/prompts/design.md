@@ -22,7 +22,10 @@ exactly the three headings below with `Figma MCP not available in this session.`
 - Compare each referenced frame with the matching screenshot and the code.
 - Fix clear mismatches only (wrong colour token, spacing, font size, missing element, copy).
   Leave matters of taste and anything the issue does not ask for.
-- Retake a screenshot after a fix when you can (`$BLACKSMITH_BROWSER`, see the verify method).
+- To screenshot a page the shots do not cover: `"$BLACKSMITH_BROWSER" --headless=new --no-sandbox
+  --disable-gpu --window-size=1366,900 --screenshot=<file> 'https://user:password@host/path'`
+  (basic auth: {preview_auth}). The preview is not redeployed after your fixes, so it
+  shows the code before them; do not retake screenshots to confirm a fix.
 - Commit fixes with `git commit`. Never push; the runner pushes.
 
 ## Write

@@ -27,7 +27,7 @@ the rest. You are not redesigning anything.
    - judgement call: sub-pixel spacing, rendering differences, placeholder data.
 5. Fix clear mismatches in code using the project's tokens and components, never
    hard-coded values when a token exists. Commit each fix; never push.
-6. Retake the affected screenshot after a fix when you can.
+6. The preview is not redeployed during this stage; confirm fixes by reading the code.
 
 ## Report
 

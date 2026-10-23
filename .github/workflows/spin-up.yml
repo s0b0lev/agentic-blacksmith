@@ -1,0 +1,274 @@
+# Reusable workflow: provision one preview droplet for a labeled issue.
+# Called from the target repository (see examples/sample-shop/.github/workflows/blacksmith.yml).
+# Secrets reach steps only through `env:`, never on a command line.
+name: blacksmith spin-up
+
+on:
+  workflow_call:
+    inputs:
+      issue:
+        description: Issue number to work on.
+        type: number
+        required: true
+      repo:
+        description: Target repository as owner/name.
+        type: string
+        default: ${{ github.repository }}
+      config_path:
+        description: Path of the blacksmith config inside the target repository.
+        type: string
+        default: blacksmith.yml
+      template_ref:
+        description: Tag, branch or commit of the template repository.
+        type: string
+        default: v1
+      template_repo:
+        description: Template repository as owner/name (point forks at themselves).
+        type: string
+        default: s0b0lev/agentic-blacksmith
+      state_bucket:
+        description: DigitalOcean Spaces bucket holding the Terraform state.
+        type: string
+        required: true
+      spaces_endpoint:
+        description: Spaces S3 endpoint of the state bucket.
+        type: string
+        default: https://fra1.digitaloceanspaces.com
+      preview_zone:
+        description: DigitalOcean-managed DNS zone for preview hosts; empty uses nip.io.
+        type: string
+        default: ""
+      base_branch:
+        description: Base branch for the work branch; empty means the repository's default branch.
+        type: string
+        default: ""
+    secrets:
+      DIGITALOCEAN_TOKEN:
+        required: true
+      SPACES_ACCESS_KEY_ID:
+        required: true
+      SPACES_SECRET_ACCESS_KEY:
+        required: true
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+      BLACKSMITH_GITHUB_TOKEN:
+        required: true
+      FIGMA_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  spin-up:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: blacksmith-issue-${{ inputs.issue }}
+      cancel-in-progress: false
+    env:
+      REPO: ${{ inputs.repo }}
+      ISSUE: ${{ inputs.issue }}
+      CONFIG_PATH: ${{ inputs.config_path }}
+    steps:
+      - name: Check secrets
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          SPACES_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          BLACKSMITH_GITHUB_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+        run: |
+          missing=()
+          for name in DIGITALOCEAN_TOKEN SPACES_ACCESS_KEY_ID SPACES_SECRET_ACCESS_KEY \
+                      CLAUDE_CODE_OAUTH_TOKEN BLACKSMITH_GITHUB_TOKEN; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::missing required secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Checkout target repository config
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.repo }}
+          token: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+          path: target
+          sparse-checkout: ${{ inputs.config_path }}
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Checkout template
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.template_repo }}
+          ref: ${{ inputs.template_ref }}
+          path: template
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Read config
+        run: |
+          get() {
+            PYTHONPATH=template/agent python3 -m blacksmith config --get "$1" --config "target/$CONFIG_PATH"
+          }
+          if ! size="$(get droplet.size)" || ! region="$(get droplet.region)" \
+             || ! image="$(get droplet.image)" || ! lifetime="$(get limits.lifetime_hours)" \
+             || ! label="$(get label)"; then
+            echo "::error::$CONFIG_PATH in $REPO is missing or invalid (see the log above)"
+            exit 1
+          fi
+          {
+            echo "DROPLET_SIZE=$size"
+            echo "DROPLET_REGION=$region"
+            echo "DROPLET_IMAGE=$image"
+            echo "LIFETIME_HOURS=$lifetime"
+            echo "LABEL=$label"
+          } >> "$GITHUB_ENV"
+
+      - name: Confirm issue is open and labeled
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+        run: |
+          issue_json="$(gh api "repos/$REPO/issues/$ISSUE")"
+          state="$(jq -r .state <<<"$issue_json")"
+          labeled="$(jq --arg l "$LABEL" '[.labels[].name] | index($l) != null' <<<"$issue_json")"
+          if [ "$state" != "open" ]; then
+            echo "::notice::$REPO#$ISSUE is $state; nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ "$labeled" != "true" ]; then
+            echo "::notice::$REPO#$ISSUE no longer carries the '$LABEL' label; nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve base branch
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+          BASE_BRANCH_INPUT: ${{ inputs.base_branch }}
+        run: |
+          base="$BASE_BRANCH_INPUT"
+          if [ -z "$base" ]; then
+            base="$(gh api "repos/$REPO" --jq .default_branch)"
+          fi
+          echo "BASE_BRANCH=$base" >> "$GITHUB_ENV"
+
+      - name: Set up Terraform
+        if: steps.check.outputs.skip != 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">= 1.9"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        if: steps.check.outputs.skip != 'true'
+        working-directory: template/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+          STATE_BUCKET: ${{ inputs.state_bucket }}
+          SPACES_ENDPOINT: ${{ inputs.spaces_endpoint }}
+        run: |
+          slug="$(tr '[:upper:]/' '[:lower:]-' <<<"$REPO")"
+          terraform init -input=false \
+            -backend-config="bucket=$STATE_BUCKET" \
+            -backend-config="key=blacksmith/$slug/terraform.tfstate" \
+            -backend-config="region=us-east-1" \
+            -backend-config="endpoints={s3=\"$SPACES_ENDPOINT\"}" \
+            -backend-config="skip_credentials_validation=true" \
+            -backend-config="skip_region_validation=true" \
+            -backend-config="skip_requesting_account_id=true" \
+            -backend-config="skip_metadata_api_check=true" \
+            -backend-config="skip_s3_checksum=true" \
+            -backend-config="use_path_style=false"
+
+      - name: Terraform workspace
+        if: steps.check.outputs.skip != 'true'
+        working-directory: template/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+        run: terraform workspace select -or-create "issue-$ISSUE"
+
+      - name: Terraform apply
+        if: steps.check.outputs.skip != 'true'
+        working-directory: template/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+          TF_VAR_do_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          TF_VAR_repo: ${{ inputs.repo }}
+          TF_VAR_issue_number: ${{ inputs.issue }}
+          TF_VAR_base_branch: ${{ env.BASE_BRANCH }}
+          TF_VAR_label: ${{ env.LABEL }}
+          TF_VAR_preview_zone: ${{ inputs.preview_zone }}
+          TF_VAR_config_path: ${{ inputs.config_path }}
+          TF_VAR_template_ref: ${{ inputs.template_ref }}
+          TF_VAR_template_repo: ${{ inputs.template_repo }}
+          TF_VAR_droplet_size: ${{ env.DROPLET_SIZE }}
+          TF_VAR_droplet_region: ${{ env.DROPLET_REGION }}
+          TF_VAR_droplet_image: ${{ env.DROPLET_IMAGE }}
+          TF_VAR_claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          TF_VAR_github_token: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+          TF_VAR_figma_api_key: ${{ secrets.FIGMA_API_KEY }}
+          TF_VAR_lifetime_hours: ${{ env.LIFETIME_HOURS }}
+        run: terraform apply -auto-approve -input=false
+
+      - name: Read Terraform outputs
+        id: tf
+        if: steps.check.outputs.skip != 'true'
+        working-directory: template/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+        run: |
+          echo "ip=$(terraform output -raw ip)" >> "$GITHUB_OUTPUT"
+          echo "preview_url=$(terraform output -raw preview_url)" >> "$GITHUB_OUTPUT"
+
+      - name: Post issue comment
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+          PREVIEW_URL: ${{ steps.tf.outputs.preview_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          marker='<!-- blacksmith:spin-up -->'
+          body="$(printf 'Blacksmith is working on this. Preview will be at %s. Logs: %s\n\n%s' \
+            "$PREVIEW_URL" "$RUN_URL" "$marker")"
+          existing="$(gh api --paginate "repos/$REPO/issues/$ISSUE/comments" \
+            --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -n 1)"
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -f body="$body" > /dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$ISSUE/comments" -f body="$body" > /dev/null
+          fi
+
+      - name: Summary
+        if: steps.check.outputs.skip != 'true'
+        env:
+          IP: ${{ steps.tf.outputs.ip }}
+          PREVIEW_URL: ${{ steps.tf.outputs.preview_url }}
+        run: |
+          {
+            echo "## Blacksmith: $REPO#$ISSUE"
+            echo
+            echo "- Preview: $PREVIEW_URL"
+            echo "- Droplet IP: \`$IP\`"
+            echo "- Terraform workspace: \`issue-$ISSUE\`"
+            echo
+            echo "SSH (from \`terraform/\` after \`terraform init\` with the same backend and \`terraform workspace select issue-$ISSUE\`):"
+            echo
+            echo '```sh'
+            echo "terraform output -raw ssh_private_key > key && chmod 600 key && ssh -i key root@$IP"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

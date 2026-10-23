@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import re
 import secrets
+import time
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-from blacksmith.config import Preview
+from blacksmith.config import Config, Preview
+from blacksmith.runner import CommandResult, CommandRunner
 
 PLACEHOLDERS = {"", "change-me", "changeme", "CHANGE_ME"}
 
@@ -125,3 +131,175 @@ def render_caddyfile(preview: Preview, host: str, auth: BasicAuth | None) -> str
         out.append("    }")
     out.append("}")
     return "\n".join(out) + "\n"
+
+
+@dataclass(frozen=True)
+class PreviewContext:
+    repo_root: Path
+    host: str
+    work_dir: Path
+
+
+@dataclass(frozen=True)
+class PreviewResult:
+    ok: bool
+    url: str
+    auth: tuple[str, str] | None
+    error: str | None
+    diagnostics: str
+
+
+def _urllib_status(url: str, auth: tuple[str, str] | None) -> int:
+    """HTTP status of a GET; 0 when the server cannot be reached."""
+    request = urllib.request.Request(url)
+    if auth:
+        token = base64.b64encode(f"{auth[0]}:{auth[1]}".encode()).decode()
+        request.add_header("Authorization", f"Basic {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status
+    except urllib.error.HTTPError as err:
+        return err.code
+    except (urllib.error.URLError, OSError):
+        return 0
+
+
+def _depends_on_dropped(compose_path: Path, drop: tuple[str, ...]) -> str | None:
+    """Error text if a kept service depends_on a dropped one, else None."""
+    data = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+    for name, service in data["services"].items():
+        if name in drop or not isinstance(service, dict):
+            continue
+        for dep in service.get("depends_on") or []:  # list or mapping: keys
+            if dep in drop:
+                return f"service '{name}' depends_on dropped service '{dep}'"
+    return None
+
+
+def _write_inputs(
+    preview: Preview,
+    ctx: PreviewContext,
+    compose_path: Path,
+    auth: tuple[str, str] | None,
+    password_hash: str | None,
+    rand: Callable[[], str],
+) -> Path:
+    """Write ``.env``, the compose override and the Caddyfile; return the env path."""
+    env_path = ctx.repo_root / ".env"
+    example = ""
+    if preview.env_example:
+        example = (ctx.repo_root / preview.env_example).read_text(encoding="utf-8")
+    env_path.write_text(render_env(example, preview.env, ctx.host, rand))
+    caddyfile = ctx.work_dir / "Caddyfile"
+    basic = BasicAuth(auth[0], password_hash) if auth and password_hash else None
+    caddyfile.write_text(render_caddyfile(preview, ctx.host, basic))
+    override = render_override(
+        preview, compose_service_names(compose_path), caddyfile_path=str(caddyfile)
+    )
+    (ctx.work_dir / "compose.override.yml").write_text(override)
+    return env_path
+
+
+def _fail(
+    run: CommandRunner,
+    base: list[str],
+    cwd: Path,
+    step: str,
+    output: str,
+    error: str,
+    auth: tuple[str, str] | None,
+    url: str,
+) -> PreviewResult:
+    parts = [f"== {step} ==\n{output}"]
+    for label, extra in (("ps", ["ps"]), ("logs", ["logs", "--tail", "100"])):
+        res = run(base + extra, cwd=cwd, timeout=60)
+        parts.append(f"== {label} ==\n{res.stdout}{res.stderr}")
+    return PreviewResult(False, url, auth, error, "\n".join(parts))
+
+
+def _wait_ready(
+    url: str,
+    auth: tuple[str, str] | None,
+    timeout_s: int,
+    http_get: Callable[[str, tuple[str, str] | None], int],
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> int | None:
+    """Poll every 5 s; None once ready, else the last status seen."""
+    deadline = clock() + timeout_s
+    while True:
+        try:
+            status = http_get(url, auth)
+        except Exception:
+            status = 0
+        if 200 <= status < 400:
+            return None
+        if clock() >= deadline:
+            return status
+        sleep(5)
+
+
+def _out(res: CommandResult) -> str:
+    return res.stdout + res.stderr
+
+
+def deploy(
+    cfg: Config,
+    ctx: PreviewContext,
+    run: CommandRunner,
+    *,
+    ready_timeout_s: int = 600,
+    http_get: Callable[[str, tuple[str, str] | None], int] = _urllib_status,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+    rand: Callable[[], str] = secrets.token_urlsafe,
+) -> PreviewResult:
+    """Bring the preview stack up and wait until it answers."""
+    preview = cfg.preview
+    url = preview.ready.replace("${PREVIEW_HOST}", ctx.host)
+    compose_path = ctx.repo_root / preview.compose
+    conflict = _depends_on_dropped(compose_path, preview.drop)
+    if conflict:
+        return PreviewResult(False, url, None, conflict, "")
+
+    auth = ("preview", rand()) if preview.auth == "basic" else None
+    password_hash = None
+    if auth:
+        cmd = ["docker", "run", "--rm", "caddy:2", "caddy", "hash-password",
+               "--plaintext", auth[1]]  # fmt: skip
+        res = run(cmd, cwd=ctx.repo_root)
+        if res.code != 0:
+            diag = f"== hash-password ==\n{_out(res)}"
+            return PreviewResult(False, url, None, "hash-password failed", diag)
+        password_hash = res.stdout.strip()
+    env_path = _write_inputs(preview, ctx, compose_path, auth, password_hash, rand)
+
+    override = ctx.work_dir / "compose.override.yml"
+    base = ["docker", "compose", "-p", preview.project,
+            "--project-directory", str(ctx.repo_root),
+            "-f", str(compose_path), "-f", str(override)]  # fmt: skip
+    up = ["up", "-d", "--build", "--wait"]
+    steps: list[tuple[str, list[str], int]] = []
+    if preview.infra:
+        steps.append(("up infra", base + up + list(preview.infra), 1800))
+    if preview.seed:
+        env = (f"export COMPOSE_PROJECT_NAME={preview.project} "
+               f"COMPOSE_FILE={compose_path}:{override} COMPOSE_PATH_SEPARATOR=: "
+               f"&& cd {ctx.repo_root} && {preview.seed}")  # fmt: skip
+        steps.append(("seed", ["bash", "-lc", env], 900))
+    steps.append(("up", base + up, 1800))
+    for step, cmd, timeout in steps:
+        res = run(cmd, cwd=ctx.repo_root, timeout=timeout)
+        if res.code != 0:
+            error = f"{step} failed (exit {res.code})"
+            return _fail(run, base, ctx.repo_root, step, _out(res), error, auth, url)
+
+    last = _wait_ready(url, auth, ready_timeout_s, http_get, sleep, clock)
+    if last is not None:
+        error = f"ready probe timed out after {ready_timeout_s}s (last status {last})"
+        return _fail(run, base, ctx.repo_root, "ready", error, error, auth, url)
+
+    meta = {"url": url, "host": ctx.host, "auth": list(auth) if auth else None,
+            "env_path": str(env_path)}  # fmt: skip
+    (ctx.work_dir / "preview.json").write_text(json.dumps(meta, indent=2))
+    return PreviewResult(True, url, auth, None, "")

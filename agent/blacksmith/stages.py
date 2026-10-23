@@ -268,6 +268,19 @@ def _details(summary: str, path: Path) -> str:
     return f"<details><summary>{summary}</summary>\n\n{text}\n</details>"
 
 
+_SHOT_LINK = re.compile(r"\]\(shots/([^)\s]+)\)")
+
+
+def _push_screenshots(ctx: RunContext, run: CommandRunner, env: PipelineEnv) -> str | None:
+    """Best effort: a failed asset push leaves the links relative, never salvages the PR."""
+    try:
+        return git.push_assets(ctx.repo_root, ctx.work_dir / "shots",
+                               f"blacksmith-assets/issue-{ctx.issue}", run)
+    except Exception as exc:
+        _log(ctx, env, f"screenshot push failed: {exc!r}")
+        return None
+
+
 def stage_pr(cfg, ctx, gh, run, state, env) -> None:
     pr_md = _fresh(ctx.work_dir / "pr.md")
     _claude(cfg, ctx, run, env, "pr")
@@ -281,6 +294,9 @@ def stage_pr(cfg, ctx, gh, run, state, env) -> None:
         _details("Verification", ctx.work_dir / "verify.md"),
         _details("Design check", ctx.work_dir / "design.md"),
     ])
+    base = _push_screenshots(ctx, run, env)
+    if base:
+        body = _SHOT_LINK.sub(lambda m: f"]({base}{m[1]})", body)
     _commit_push(ctx, run, f"blacksmith: finish #{ctx.issue}")
     pr = gh.create_pr(head=ctx.branch, base=ctx.base_branch, title=title, body=body, draft=False)
     state.pr_number, state.pr_url = pr.number, pr.url

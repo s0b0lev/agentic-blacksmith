@@ -379,3 +379,34 @@ def test_load_prompt_reads_preview_json(tmp_path):
     (e.ctx.work_dir / "preview.json").write_text(json.dumps(meta))
     (e.ctx.prompts_dir / "x.md").write_text("{preview_url} {preview_auth}")
     assert load_prompt(e.ctx.prompts_dir, "x", e.ctx) == "https://pr-7.example.com/ preview / pw"
+
+
+def test_pr_screenshot_links_rewritten(tmp_path):
+    e = make_env(tmp_path)
+    e.run.responses["git remote get-url"] = CommandResult(
+        0, "https://github.com/acme/shop.git\n", "")
+    e.run.responses["git -c user.name=blacksmith[bot] -c user.email=blacksmith@users.noreply"
+                    ".github.com commit-tree"] = CommandResult(0, "abc123\n", "")
+
+    def pr(work_dir):
+        (work_dir / "shots" / "01-home.png").write_bytes(b"png")
+        (work_dir / "pr.md").write_text(
+            "Add scale widget\n\nCloses #7\n\n![Home](shots/01-home.png)\n")
+
+    e.claude.actions["pr"] = pr
+    e.claude.actions["verify"] = _write(
+        "verify.md", "RESULT: pass\nSee ![home](shots/01-home.png)\n")
+    go(e)
+    base = "https://raw.githubusercontent.com/acme/shop/blacksmith-assets/issue-7/"
+    body = e.gh.prs[0]["body"]
+    assert f"![Home]({base}01-home.png)" in body
+    assert f"![home]({base}01-home.png)" in body
+    assert "](shots/" not in body
+    assert ["git", "push", "-f", "origin",
+            "abc123:refs/heads/blacksmith-assets/issue-7"] in e.run.calls
+
+
+def test_pr_without_screenshots_pushes_no_assets(tmp_path):
+    e = make_env(tmp_path)
+    go(e)
+    assert not any("blacksmith-assets" in " ".join(c) for c in e.run.calls)

@@ -1,2 +1,8 @@
 docs/superpowers/
 .superpowers/
+__pycache__/
+.pytest_cache/
+.terraform/
+*.tfstate*
+.env
+.venv/

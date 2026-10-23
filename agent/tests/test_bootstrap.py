@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -104,11 +105,79 @@ def test_bootstrap_has_numbered_steps_in_order():
     text = BOOTSTRAP.read_text()
     positions = []
     for n in range(1, 10):
-        m = re.search(rf"== step {n}: [^=]+ ==", text)
+        m = re.search(rf'^step {n} "[^"]+"$', text, re.M)
         assert m, f"step {n} missing"
         positions.append(m.start())
     assert positions == sorted(positions)
-    assert "== step 10:" not in text
+    assert "step 10 " not in text
+
+
+def test_lifetime_timer_enabled_before_any_apt_call():
+    text = BOOTSTRAP.read_text()
+    body = text[text.index('step 1 "'):]
+    enable = body.index("systemctl enable --now blacksmith-lifetime.timer\n")
+    first_apt = body.index("apt_get ")
+    assert enable < first_apt
+    early = body[:enable]
+    assert '"$AGENT/systemd/blacksmith-lifetime.timer" /etc/systemd/system/' in early
+    assert re.search(r"sed .*OnBootSec=.*LIFETIME_HOURS", early)
+    assert early.index("systemctl daemon-reload") < enable
+
+
+def test_failure_trap_posts_bootstrap_failed_comment():
+    text = BOOTSTRAP.read_text()
+    assert "trap on_exit EXIT" in text
+    assert "<!-- blacksmith:bootstrap-failed -->" in text
+    assert re.search(r'^\s+STEP="\$2"$', text, re.M)  # the step helper records the name
+
+
+def _functions(text: str, *names: str) -> str:
+    return "".join(re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", text, re.S | re.M).group(0)
+                   for name in names)
+
+
+def test_report_failure_posts_comment_with_step(tmp_path):
+    fns = _functions(BOOTSTRAP.read_text(), "file_get", "report_failure")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "curl").write_text(f'#!/bin/sh\necho "$@" > {tmp_path}/args\ncat > {tmp_path}/body\n')
+    (bindir / "curl").chmod(0o755)
+    env_file, conf = tmp_path / "env", tmp_path / "config"
+    env_file.write_text("BLACKSMITH_GITHUB_TOKEN=ghp_x\n")
+    conf.write_text("ISSUE=12\nREPO=o/r\n")
+    script = (f"set -euo pipefail\nENV_FILE={env_file}\nCONF={conf}\nLOG=/var/log/b.log\n"
+              f"LIFETIME_HOURS=24\nSTEP_N=7\nSTEP='setup commands'\nlog() {{ :; }}\n{fns}report_failure\n")
+    proc = subprocess.run(["bash", "-c", script], text=True, capture_output=True,
+                          env={"PATH": f"{bindir}:/usr/bin:/bin"})
+    assert proc.returncode == 0, proc.stderr
+    args = (tmp_path / "args").read_text()
+    assert "Authorization: Bearer ghp_x" in args
+    assert "https://api.github.com/repos/o/r/issues/12/comments" in args
+    body = json.loads((tmp_path / "body").read_text())["body"]
+    assert body.startswith(
+        "Blacksmith bootstrap failed at step 7 (setup commands): see /var/log/b.log on the "
+        "droplet. The server will self-destruct after 24 h."
+    )
+    assert body.endswith("<!-- blacksmith:bootstrap-failed -->")
+
+
+def test_bootstrap_smoke_tests_claude_token():
+    text = BOOTSTRAP.read_text()
+    install = text.index("claude.ai/install.sh")
+    smoke = text.index('claude -p "Reply with the single word ok." --max-turns 1 --output-format json')
+    assert install < smoke
+    assert "timeout 120 claude -p" in text
+    assert '"is_error"' in text
+    die = text.index("die ", smoke)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in text[die:text.index("\n", die)]
+
+
+def test_bootstrap_blocks_metadata_from_containers():
+    text = BOOTSTRAP.read_text()
+    rule = "DOCKER-USER -d 169.254.169.254 -j DROP"
+    assert f"iptables -C {rule}" in text and f"iptables -I {rule}" in text
+    assert text.index("systemctl enable --now docker") < text.index(f"iptables -I {rule}")
+    assert text.index("169.254.169.254/metadata/v1/interfaces") < text.index(f"iptables -I {rule}")
 
 
 def test_bootstrap_starts_units_in_order():
@@ -126,6 +195,35 @@ def _fake_python(tmp_path: Path) -> Path:
     fake.write_text('#!/bin/sh\necho "GH_TOKEN=$GH_TOKEN"\necho "ARGS=$*"\n')
     fake.chmod(0o755)
     return bindir
+
+
+def test_run_sh_self_destruct_falls_back_to_curl(tmp_path):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "python3").write_text("#!/bin/sh\nexit 1\n")
+    (bindir / "curl").write_text(f'#!/bin/sh\necho "$@" > {tmp_path}/args\n')
+    for f in bindir.iterdir():
+        f.chmod(0o755)
+    env = {"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(tmp_path),
+           "BLACKSMITH_GITHUB_TOKEN": "ghs_abc", "REPO": "o/r", "ISSUE": "5"}
+    proc = subprocess.run(["bash", str(RUN_SH), "self-destruct"], env=env, text=True,
+                          capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    args = (tmp_path / "args").read_text()
+    assert "https://api.github.com/repos/o/r/dispatches" in args
+    assert '{"event_type":"blacksmith-self-destruct","client_payload":{"issue":5}}' in args
+    assert "Authorization: Bearer ghs_abc" in args
+
+
+def test_run_sh_self_destruct_no_fallback_when_runner_succeeds(tmp_path):
+    bindir = _fake_python(tmp_path)
+    (bindir / "curl").write_text(f"#!/bin/sh\ntouch {tmp_path}/curl-ran\n")
+    (bindir / "curl").chmod(0o755)
+    env = {"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(tmp_path)}
+    proc = subprocess.run(["bash", str(RUN_SH), "self-destruct"], env=env, text=True,
+                          capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    assert not (tmp_path / "curl-ran").exists()
 
 
 def test_run_sh_exports_gh_token(tmp_path):

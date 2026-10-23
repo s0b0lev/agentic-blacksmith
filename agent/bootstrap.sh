@@ -20,7 +20,43 @@ cd /
 
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
 die() { log "FATAL: $*"; exit 1; }
-trap 'log "bootstrap failed (exit $?) at line $LINENO"' ERR
+
+STEP_N=0
+STEP=prelude
+step() {
+  STEP_N="$1"
+  STEP="$2"
+  echo "== step $1: $2 =="
+}
+
+# Best effort: tell the issue that bootstrap failed. Never changes the exit status.
+report_failure() {
+  local token repo issue hours body
+  token="$(file_get "$ENV_FILE" BLACKSMITH_GITHUB_TOKEN 2>/dev/null || true)"
+  repo="$(file_get "$CONF" REPO 2>/dev/null || true)"
+  issue="$(file_get "$CONF" ISSUE 2>/dev/null || true)"
+  hours="${LIFETIME_HOURS:-168}"
+  [ -n "$token" ] && [ -n "$repo" ] && [[ "$issue" =~ ^[0-9]+$ ]] || return 0
+  body="Blacksmith bootstrap failed at step $STEP_N ($STEP): see $LOG on the droplet. The server will self-destruct after $hours h.
+
+<!-- blacksmith:bootstrap-failed -->"
+  python3 -I -c 'import json, sys; print(json.dumps({"body": sys.argv[1]}))' "$body" \
+    | curl -fsS --max-time 30 -o /dev/null -X POST \
+        -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
+        --data @- "https://api.github.com/repos/$repo/issues/$issue/comments" \
+    || log "could not post the bootstrap-failed comment"
+}
+on_exit() {
+  local status=$?
+  trap - ERR
+  if [ "$status" -ne 0 ]; then
+    log "bootstrap failed (exit $status) at step $STEP_N ($STEP)"
+    report_failure || true
+  fi
+  exit "$status"
+}
+trap 'log "command failed (exit $?) at line $LINENO"' ERR
+trap on_exit EXIT
 
 # KEY=value lookup that strips one layer of quotes, like blacksmith.read_config_file.
 file_get() {
@@ -78,7 +114,7 @@ done
 [[ "$LIFETIME_HOURS" =~ ^[0-9]+$ ]] || die "LIFETIME_HOURS must be a number, got '$LIFETIME_HOURS'"
 log "bootstrap for $REPO#$ISSUE (base $BASE_BRANCH, config $CONFIG_PATH)"
 
-echo "== step 1: user and secrets =="
+step 1 "user, secrets and lifetime cap"
 id blacksmith >/dev/null 2>&1 || useradd -m -s /bin/bash blacksmith
 chown root:blacksmith "$ENV_FILE"
 chmod 0640 "$ENV_FILE"
@@ -86,8 +122,24 @@ chown root:root "$CONF"
 chmod 0644 "$CONF"
 chmod -R a+rX /opt/blacksmith
 chmod 0755 "$AGENT/bootstrap.sh" "$AGENT/systemd/run.sh" "$AGENT/hooks/pre-push"
+# The lifetime cap goes in before anything that can fail (apt, clone, setup), so a failed
+# bootstrap still self-destructs. The service needs its WorkingDirectory and the runner
+# config keys; later steps fill in the real values. run.sh falls back to a plain curl
+# dispatch when the runner itself cannot run yet.
+install -d -o blacksmith -g blacksmith "$REPO_ROOT"
+set_conf REPO_ROOT "$REPO_ROOT"
+set_conf PROMPTS_DIR "$PROMPTS_DIR"
+for key in BRANCH PREVIEW_HOST; do
+  grep -q -E "^$key=" "$CONF" || set_conf "$key" ""
+done
+install -m 0644 "$AGENT/systemd/blacksmith-lifetime.service" \
+  "$AGENT/systemd/blacksmith-lifetime.timer" /etc/systemd/system/
+sed -i "s/^OnBootSec=.*/OnBootSec=${LIFETIME_HOURS}h/" /etc/systemd/system/blacksmith-lifetime.timer
+systemctl daemon-reload
+systemctl enable --now blacksmith-lifetime.timer
+log "lifetime cap: self-destruct ${LIFETIME_HOURS}h after boot"
 
-echo "== step 2: packages, docker, browser, uv and node =="
+step 2 "packages, docker, browser, uv and node"
 apt_get update
 apt_get install ca-certificates curl gnupg git jq build-essential python3 python3-yaml unzip
 install -m 0755 -d /etc/apt/keyrings
@@ -149,15 +201,25 @@ grep -qxF "$line" "$HOME/.profile" || printf "%s\n" "$line" >> "$HOME/.profile"
 '
 as_bs 'echo "uv $(uv --version), node $(node --version), npm $(npm --version)"'
 
-echo "== step 3: claude code =="
+step 3 "claude code"
 as_bs 'command -v claude >/dev/null || curl -fsSL https://claude.ai/install.sh | bash'
 as_bs 'claude --version'
+# Fail here, with a comment on the issue, rather than hours later in the first stage.
+CLAUDE_TOKEN="$(file_get "$ENV_FILE" CLAUDE_CODE_OAUTH_TOKEN)"
+smoke=""
+if ! smoke="$(CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_TOKEN" as_bs \
+      'timeout 120 claude -p "Reply with the single word ok." --max-turns 1 --output-format json')" \
+    || ! printf '%s' "$smoke" \
+      | python3 -I -c 'import json, sys; sys.exit(1 if json.load(sys.stdin).get("is_error") else 0)'; then
+  die "Claude Code smoke test failed; check the CLAUDE_CODE_OAUTH_TOKEN secret (output: ${smoke:0:300})"
+fi
+log "claude smoke test: ok"
 if ! as_bs 'claude plugin marketplace add anthropics/claude-plugins-official || true
   claude plugin install --scope user superpowers@claude-plugins-official'; then
   log "WARNING: could not install the superpowers plugin; continuing without it"
 fi
 
-echo "== step 4: preview host =="
+step 4 "preview host"
 if [ -n "$PREVIEW_ZONE" ]; then
   PREVIEW_HOST="pr-$ISSUE.$PREVIEW_ZONE"
 else
@@ -168,8 +230,13 @@ else
 fi
 log "preview host: $PREVIEW_HOST"
 set_conf PREVIEW_HOST "$PREVIEW_HOST"
+# Containers must not read the droplet's user data (it holds the tokens) from the metadata
+# service; the host itself still can (DOCKER-USER only sees forwarded container traffic).
+command -v iptables >/dev/null || apt_get install iptables
+iptables -C DOCKER-USER -d 169.254.169.254 -j DROP 2>/dev/null \
+  || iptables -I DOCKER-USER -d 169.254.169.254 -j DROP
 
-echo "== step 5: git clone, branch and push guard =="
+step 5 "git clone, branch and push guard"
 as_bs '
 git config --global credential.helper "$1"
 git config --global user.name "blacksmith[bot]"
@@ -202,7 +269,7 @@ else
 fi
 ' "$REPO_ROOT" "$BRANCH" "$BASE_BRANCH"
 
-echo "== step 6: skills and mcp =="
+step 6 "skills and mcp"
 install -d -o blacksmith -g blacksmith "$HOME_DIR/.claude" "$HOME_DIR/.claude/skills"
 for skill in "$AGENT"/skills/*/; do
   name="$(basename "$skill")"
@@ -232,7 +299,7 @@ else
   log "MCP servers not enabled (needs FIGMA_API_KEY, design.figma: true and .mcp.json)"
 fi
 
-echo "== step 7: setup commands =="
+step 7 "setup commands"
 SETUP="$(bs_config setup)" || die "cannot read setup from $CONFIG_PATH"
 while IFS= read -r cmd; do
   [ -n "$cmd" ] || continue
@@ -248,13 +315,13 @@ if hooks_path="$(as_bs 'git -C "$1" config --local core.hooksPath' "$REPO_ROOT")
   as_bs 'git -C "$1" config --local --unset core.hooksPath' "$REPO_ROOT"
 fi
 
-echo "== step 8: fetch issue =="
+step 8 "fetch issue"
 BLACKSMITH_GITHUB_TOKEN="$GITHUB_TOKEN" as_bs '
 cd "$1"
 GH_TOKEN="$BLACKSMITH_GITHUB_TOKEN" PYTHONPATH="$2" python3 -P -m blacksmith fetch-issue
 ' "$REPO_ROOT" "$AGENT"
 
-echo "== step 9: runner config and systemd units =="
+step 9 "runner config and systemd units"
 set_conf REPO_ROOT "$REPO_ROOT"
 set_conf PROMPTS_DIR "$PROMPTS_DIR"
 set_conf BRANCH "$BRANCH"

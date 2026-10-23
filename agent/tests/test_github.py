@@ -210,3 +210,16 @@ def test_nonzero_exit_raises_with_command_and_stderr(fake_runner):
     assert "gh api repos/o/r/dispatches" in str(err.value)
     assert "boom" in str(err.value)
     assert "payload" not in str(err.value)
+
+
+def test_reply_refuses_secret_in_quoted_comment(fake_runner):
+    comment = Comment(6, "u", f"quoted {SECRET}", "t", "issue")
+    with pytest.raises(SecretLeak):
+        make(fake_runner).reply(comment, 9, "ok")
+    assert fake_runner.calls == []
+
+
+def test_dispatch_refuses_secret_in_payload(fake_runner):
+    with pytest.raises(SecretLeak):
+        make(fake_runner).dispatch("go", {"k": f"v {SECRET}"})
+    assert fake_runner.calls == []

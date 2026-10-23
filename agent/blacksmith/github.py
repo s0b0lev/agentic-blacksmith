@@ -190,15 +190,14 @@ class GitHub:
         return sorted(kept, key=lambda c: _normalise(c.created_at))
 
     def reply(self, comment: Comment, pr: int, body: str) -> None:
-        body = scrub(body, self._secrets)
         if comment.kind == "review_comment":
             path = f"repos/{self.repo}/pulls/{pr}/comments/{comment.id}/replies"
-            self._api(path, "POST", {"body": body})
-            return
-        first_line = comment.body.splitlines()[0] if comment.body else ""
-        self._api(
-            f"repos/{self.repo}/issues/{pr}/comments", "POST", {"body": f"> {first_line}\n\n{body}"}
-        )
+            text = body
+        else:
+            first_line = comment.body.splitlines()[0] if comment.body else ""
+            path = f"repos/{self.repo}/issues/{pr}/comments"
+            text = f"> {first_line}\n\n{body}"
+        self._api(path, "POST", {"body": scrub(text, self._secrets)})
 
     def request_review(self, pr: int, user: str) -> bool:
         if user == self.viewer_login():
@@ -207,7 +206,6 @@ class GitHub:
         return True
 
     def dispatch(self, event_type: str, payload: dict) -> None:
-        self._api(
-            f"repos/{self.repo}/dispatches", "POST",
-            {"event_type": event_type, "client_payload": payload},
-        )
+        body = {"event_type": event_type, "client_payload": payload}
+        scrub(json.dumps(body), self._secrets)
+        self._api(f"repos/{self.repo}/dispatches", "POST", body)

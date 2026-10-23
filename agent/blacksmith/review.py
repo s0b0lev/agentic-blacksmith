@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 from collections.abc import Callable, Sequence
 
 from blacksmith import preview
@@ -15,6 +16,8 @@ from blacksmith.stages import (
 )
 from blacksmith.state import State, load_state, save_state
 
+REPLY_MARKER = "<!-- blacksmith:reply -->"
+ROUND_STAGES = {"done", "salvaged"}
 SELF_DESTRUCT_EVENT = "blacksmith-self-destruct"
 EXPIRED = ("Blacksmith preview for this PR expired after {age} and the server is being "
            "destroyed. Re-label the issue to start over.")
@@ -43,15 +46,50 @@ def _short_sha(ctx: RunContext, run: CommandRunner) -> str:
     return run(["git", "rev-parse", "--short", "HEAD"], cwd=ctx.repo_root).stdout.strip()
 
 
+def _post_replies(ctx: RunContext, gh: GitHub, pr: int, comments: list[Comment],
+                  now_iso: Callable[[], str]) -> int:
+    """Post the agent's replies.json through the runner (marked, scrubbed); return the count."""
+    path = ctx.work_dir / "replies.json"
+    try:
+        entries = json.loads(path.read_text())
+        if not isinstance(entries, list):
+            raise ValueError("replies.json is not a list")
+    except FileNotFoundError:
+        _log(ctx, now_iso, "no replies.json written")
+        return 0
+    except ValueError as exc:
+        _log(ctx, now_iso, f"replies.json ignored: {exc!r}")
+        return 0
+    posted = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            _log(ctx, now_iso, f"reply skipped: not an object: {entry!r}")
+            continue
+        cid, kind = entry.get("comment_id"), entry.get("kind")
+        target = next((c for c in comments
+                       if c.id == cid and (kind is None or c.kind == kind)), None)
+        if target is None:
+            _log(ctx, now_iso, f"reply skipped: unknown comment {kind} {cid!r}")
+            continue
+        try:
+            gh.reply(target, pr, f"{entry.get('body', '')}\n\n{REPLY_MARKER}")
+            posted += 1
+        except Exception as exc:
+            _log(ctx, now_iso, f"reply to {kind} {cid} failed: {exc!r}")
+    return posted
+
+
 def _round(cfg: Config, ctx: RunContext, gh: GitHub, run: CommandRunner, state: State,
            comments: list[Comment], n: int, claude: Callable[..., StageResult],
            deploy: Callable[..., preview.PreviewResult], now_iso: Callable[[], str]) -> str:
     """Run one round and return its summary line."""
     (ctx.work_dir / "transcripts").mkdir(parents=True, exist_ok=True)
+    (ctx.work_dir / "replies.json").unlink(missing_ok=True)  # never repost a stale file
     prompt = load_prompt(ctx.prompts_dir, "review", ctx, {
         "comments": render_comments(comments),
         "pr_number": str(state.pr_number),
         "pr_url": state.pr_url or "",
+        "reply_marker": REPLY_MARKER,
     })
     res = claude(
         prompt,
@@ -66,6 +104,7 @@ def _round(cfg: Config, ctx: RunContext, gh: GitHub, run: CommandRunner, state: 
                        f"turns={res.num_turns} {res.cost_note}".rstrip())
     _commit_push(ctx, run, f"blacksmith: review round {n} for #{ctx.issue}")
     sha = _short_sha(ctx, run)
+    replied = _post_replies(ctx, gh, state.pr_number, comments, now_iso)
 
     before = _preview_meta(ctx.work_dir)
     pres = deploy(cfg, preview.PreviewContext(ctx.repo_root, ctx.host, ctx.work_dir), run)
@@ -79,7 +118,7 @@ def _round(cfg: Config, ctx: RunContext, gh: GitHub, run: CommandRunner, state: 
         preview_note = f"failed: {pres.error}"
 
     if res.ok:
-        return f"Round {n}: addressed {len(comments)} comment(s) in {sha}; preview {preview_note}"
+        return f"Round {n}: addressed {replied} comment(s) in {sha}; preview {preview_note}"
     why = "timed out" if res.timed_out else "error"
     return (f"Round {n}: agent session did not finish cleanly ({why}); pushed {sha}; "
             f"preview {preview_note}")
@@ -97,7 +136,7 @@ def review_round(
 ) -> bool:
     """Address human comments posted since the last round. True when a round ran."""
     state = _load(ctx)
-    if state is None or state.pr_number is None:
+    if state is None or state.pr_number is None or state.stage not in ROUND_STAGES:
         return False
     round_start = now_iso()
     comments = gh.human_comments_since(state.pr_number, state.last_seen)

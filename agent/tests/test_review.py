@@ -6,7 +6,7 @@ from blacksmith.github import Comment
 from blacksmith.review import render_comments, review_round, self_destruct
 from blacksmith.runner import CommandResult
 from blacksmith.state import State, load_state, save_state
-from test_stages import DOWN, UP, FakeClaude, FakeGitHub, make_env
+from test_stages import DOWN, UP, FakeClaude, FakeGitHub, _write, make_env
 
 T1 = "2026-10-23T12:00:00+00:00"
 T2 = "2026-10-23T12:30:00+00:00"
@@ -22,6 +22,11 @@ class ReviewGitHub(FakeGitHub):
         self.since_calls: list[tuple[int, str | None]] = []
         self.dispatches: list[tuple[str, dict]] = []
         self.fail_upsert = False
+        self.replies: list[tuple[int, int, str]] = []
+
+    def reply(self, comment, pr, body):
+        self.events.append("reply")
+        self.replies.append((comment.id, pr, body))
 
     def human_comments_since(self, pr, since):
         self.events.append("comments_since")
@@ -55,7 +60,11 @@ def prepare(tmp_path, *, pr=5, comments=(REVIEW, ISSUE_COMMENT), round=0, **limi
     e.gh.comments = list(comments)
     e.claude = ReviewClaude(e.ctx.work_dir, e.events)
     (e.ctx.prompts_dir / "review.md").write_text(
-        "PROMPT:review\ncomments={comments}\npr={pr_number} {pr_url}\n")
+        "PROMPT:review\ncomments={comments}\npr={pr_number} {pr_url}\nmarker={reply_marker}\n")
+    e.claude.actions["review"] = _write("replies.json", json.dumps([
+        {"comment_id": 11, "kind": "review_comment", "body": "Renamed."},
+        {"comment_id": 12, "kind": "issue", "body": "Footer fixed."},
+    ]))
     e.ctx.work_dir.mkdir()
     state = State(7, "blacksmith/issue-7", stage="done", last_seen="2026-10-23T10:00:00+00:00",
                   round=round)
@@ -109,7 +118,7 @@ def test_round_sets_last_seen_to_round_start_not_end(tmp_path):
 def test_round_pushes_and_redeploys(tmp_path):
     e = prepare(tmp_path, review_round_minutes=30, max_turns_per_stage=50)
     assert go(e) is True
-    assert e.events == ["comments_since", "claude:review", "push", "deploy",
+    assert e.events == ["comments_since", "claude:review", "push", "reply", "reply", "deploy",
                         "upsert:preview", "upsert:round-1"]
     call = e.claude.calls[0]
     assert call["timeout_s"] == 1800 and call["max_turns"] == 50
@@ -147,7 +156,7 @@ def test_round_claude_failure_still_pushes_and_reports(tmp_path):
     e = prepare(tmp_path)
     e.claude.result = StageResult(False, True, "", None, tmp_path / "t.json", "")
     assert go(e) is True
-    assert e.events[1:4] == ["claude:review", "push", "deploy"]
+    assert [x for x in e.events if x != "reply"][1:4] == ["claude:review", "push", "deploy"]
     assert e.gh.upserts[-1] == (5, "round-1", "Round 1: agent session did not finish cleanly "
                                               "(timed out); pushed abc1234; preview ok")
     (tmp_path / "b").mkdir()
@@ -215,3 +224,56 @@ def test_self_destruct_comment_failure_still_dispatches(tmp_path):
     self_destruct(e.cfg, e.ctx, e.gh)
     assert e.gh.dispatches == [("blacksmith-self-destruct", {"issue": 7})]
     assert "gh down" in (e.ctx.work_dir / "log.md").read_text()
+
+
+def test_round_posts_replies_from_file_with_marker(tmp_path):
+    e = prepare(tmp_path)
+    assert go(e) is True
+    assert e.gh.replies == [(11, 5, "Renamed.\n\n<!-- blacksmith:reply -->"),
+                            (12, 5, "Footer fixed.\n\n<!-- blacksmith:reply -->")]
+    assert "marker=<!-- blacksmith:reply -->" in e.claude.calls[0]["prompt"]
+    assert "addressed 2 comment(s)" in e.gh.upserts[-1][2]
+
+
+def test_round_ignores_unknown_reply_ids_and_bad_json(tmp_path):
+    e = prepare(tmp_path)
+    e.claude.actions["review"] = _write("replies.json", json.dumps([
+        {"comment_id": 999, "kind": "issue", "body": "?"},
+        {"comment_id": 12, "kind": "issue", "body": "Footer fixed."},
+    ]))
+    go(e)
+    assert [r[0] for r in e.gh.replies] == [12]
+    assert "addressed 1 comment(s)" in e.gh.upserts[-1][2]
+    assert "unknown comment issue 999" in (e.ctx.work_dir / "log.md").read_text()
+
+    (tmp_path / "b").mkdir()
+    e2 = prepare(tmp_path / "b")
+    e2.claude.actions["review"] = _write("replies.json", "{not json")
+    assert go(e2) is True
+    assert e2.gh.replies == []
+    assert "addressed 0 comment(s)" in e2.gh.upserts[-1][2]
+    assert "replies.json ignored" in (e2.ctx.work_dir / "log.md").read_text()
+
+
+def test_round_deletes_stale_replies_file(tmp_path):
+    e = prepare(tmp_path)
+    e.claude.actions["review"] = None
+    (e.ctx.work_dir / "replies.json").write_text(
+        json.dumps([{"comment_id": 11, "kind": "review_comment", "body": "old"}]))
+    go(e)
+    assert e.gh.replies == []
+    assert "addressed 0 comment(s)" in e.gh.upserts[-1][2]
+
+
+def test_no_round_before_first_pass_finishes(tmp_path):
+    e = prepare(tmp_path)
+    state = state_of(e)
+    for stage in ("init", "build", "pr"):
+        state.stage = stage
+        save_state(e.ctx.work_dir / "state.json", state)
+        assert go(e) is False
+    assert e.gh.since_calls == [] and e.claude.calls == []
+    assert not (e.ctx.work_dir / "lock").exists()
+    state.stage = "salvaged"
+    save_state(e.ctx.work_dir / "state.json", state)
+    assert go(e) is True

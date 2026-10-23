@@ -11,13 +11,13 @@ Times are measured from the moment you add the label. The sample-shop limits are
 - [ ] `s0b0lev/agentic-blacksmith` is public (Settings → General → Danger Zone → Change
       visibility), so sample-shop can call its reusable workflows and the droplet can clone
       it.
-- [ ] The `feat/v1-template` branch is pushed to `s0b0lev/agentic-blacksmith`.
+- [ ] The `master` branch is pushed to `s0b0lev/agentic-blacksmith`.
 - [ ] sample-shop has all six secrets and `BLACKSMITH_STATE_BUCKET` set, as in
       [adopting.md](adopting.md) step 7 (`BLACKSMITH_PREVIEW_ZONE` is optional).
 - [ ] sample-shop has `.github/workflows/blacksmith.yml` and `blacksmith.yml` from
       `examples/sample-shop/` on its default branch, and a `blacksmith` label.
 - [ ] The template ref the workflow pins exists. Before `v1` is tagged, temporarily point
-      the two `uses:` lines at `@feat/v1-template` and add `template_ref: feat/v1-template`
+      the two `uses:` lines at `@master` and add `template_ref: master`
       under `with:` in both jobs. Revert this after the tag exists.
 - [ ] The DigitalOcean console shows no droplet tagged `blacksmith`.
 
@@ -70,7 +70,7 @@ Times are measured from the moment you add the label. The sample-shop limits are
 ## After it passes
 
 - [ ] Tag the release in this repository (`git tag v1 && git push origin v1`) and revert the
-      temporary `@feat/v1-template` pins in sample-shop.
+      temporary `@master` pins in sample-shop.
 
 ## If it fails
 

@@ -59,7 +59,7 @@ The droplet's SSH key exists only in the Terraform state. To read it, initialise
 against the same backend the workflow uses.
 
 1. Install Terraform 1.9 or newer, and clone the template at the ref your workflow pins
-   (`v1`, or `feat/v1-template` while running the end-to-end checklist before `v1` exists):
+   (`v1`, or `master` while running the end-to-end checklist before `v1` exists):
 
    ```sh
    git clone --branch <the ref your workflow pins, e.g. v1> https://github.com/s0b0lev/agentic-blacksmith.git

@@ -48,5 +48,5 @@ v1 — backend and web frontend projects that run with Docker Compose; mobile is
 - `agent/` — what runs on the droplet: the Python runner (`blacksmith/`), prompts, skills,
   `bootstrap.sh`, systemd units, the pre-push guard, and tests.
 - `terraform/` — one droplet per issue, with its firewall, SSH key and optional DNS record.
-- `examples/` — the first adopter's workflow and `blacksmith.yml` (sample-shop).
+- `examples/` — a sample adopter's workflow and `blacksmith.yml` (`sample-shop`).
 - `docs/` — adoption guide, operations guide, end-to-end checklist and the droplet cleanup script.

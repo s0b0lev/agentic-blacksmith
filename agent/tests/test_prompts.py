@@ -18,6 +18,7 @@ SKILLS = ("blacksmith-plan", "blacksmith-build", "blacksmith-verify",
 EXTRA = {"diagnostics": "D", "check_results": "C", "verify": "V", "comments": "M",
          "pr_number": "12", "pr_url": "https://x/pull/12", "reply_marker": "<!-- r -->"}
 KNOWN = ("issue", "branch", "host", "work_dir", "preview_url", "preview_auth", *EXTRA)
+# Skills and prompts stay project-neutral: they must not borrow names from the sample example.
 PROJECT_NAMES = ("sample-shop", "sampleshop", "acme")
 
 

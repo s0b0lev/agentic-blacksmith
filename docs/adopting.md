@@ -417,7 +417,7 @@ around this without changing your repository:
 - `preview.overrides` sets the replacement's own settings.
 - `preview.drop` leaves a service out entirely.
 
-The sample-shop example's MinIO recipe uses the last three. `minio/minio:latest` is no longer
+The sample example's MinIO recipe uses the last three. `minio/minio:latest` is no longer
 pullable, and the Bitnami image that replaces it stores data under `/bitnami/minio/data`, has
 no `mc` for the production healthcheck, starts the server itself (so the production
 `command: server /data ...` must go), and creates the public bucket from

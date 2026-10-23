@@ -1,3 +1,4 @@
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,7 +15,8 @@ from blacksmith.preview import (
 )
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples/sample-shop/blacksmith.yml"
-JIM_COMPOSE = Path("/path/to/sample-shop/ops/docker-compose.prod.yml")
+# Optional: point at a real adopter's production compose file to check it parses.
+REAL_COMPOSE = os.environ.get("BLACKSMITH_REAL_COMPOSE")
 SERVICES = ["db", "minio", "minio-init", "api", "worker", "beat", "admin", "storefront"]
 CADDYFILE = "/srv/app/.blacksmith/Caddyfile"
 REPO = Path("/srv/app")
@@ -134,10 +136,10 @@ def test_caddyfile_rejects_unsupported_rewrite(preview):
         render_caddyfile(bad, "h", None)
 
 
-def test_service_names_from_jim_scale_compose():
-    if not JIM_COMPOSE.exists():
-        pytest.skip("sample-shop compose not present")
-    assert "minio-init" in compose_service_names(JIM_COMPOSE)
+def test_service_names_from_real_compose():
+    if not REAL_COMPOSE:
+        pytest.skip("BLACKSMITH_REAL_COMPOSE not set")
+    assert compose_service_names(Path(REAL_COMPOSE))
 
 
 def test_service_names_keep_file_order_and_require_services(tmp_path):

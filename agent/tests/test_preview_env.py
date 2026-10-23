@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -7,7 +8,8 @@ import pytest
 
 from blacksmith.preview import PLACEHOLDERS, preview_host, render_env
 
-JIM_EXAMPLE = Path("/path/to/sample-shop/ops/.env.prod.example")
+# Optional: point at a real adopter's env example to check every key renders.
+REAL_ENV_EXAMPLE = os.environ.get("BLACKSMITH_REAL_ENV_EXAMPLE")
 
 
 def _lines(out: str) -> dict[str, str]:
@@ -19,7 +21,7 @@ def _lines(out: str) -> dict[str, str]:
 
 
 def test_host_with_zone():
-    assert preview_host(123, "1.2.3.4", "preview.sample-shop.ru") == "pr-123.preview.sample-shop.ru"
+    assert preview_host(123, "1.2.3.4", "preview.example.com") == "pr-123.preview.example.com"
 
 
 @pytest.mark.parametrize("zone", [None, ""])
@@ -99,10 +101,10 @@ def test_override_appends_missing_key():
     assert out.splitlines() == ["A='9'", "B='2'"]
 
 
-def test_jim_scale_example_renders():
-    if not JIM_EXAMPLE.exists():
-        pytest.skip("sample-shop example not available")
-    example = JIM_EXAMPLE.read_text()
+def test_real_env_example_renders():
+    if not REAL_ENV_EXAMPLE:
+        pytest.skip("BLACKSMITH_REAL_ENV_EXAMPLE not set")
+    example = Path(REAL_ENV_EXAMPLE).read_text()
     keys = [
         line.split("=", 1)[0]
         for line in example.splitlines()
@@ -112,4 +114,5 @@ def test_jim_scale_example_renders():
     for key in keys:
         assert key in rendered
         assert rendered[key].strip("'") not in PLACEHOLDERS
-    assert rendered["POSTGRES_PASSWORD"].strip("'") != "change-me"
+    if "POSTGRES_PASSWORD" in rendered:
+        assert rendered["POSTGRES_PASSWORD"].strip("'") != "change-me"

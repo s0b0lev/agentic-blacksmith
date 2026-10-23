@@ -18,7 +18,7 @@ def minimal() -> dict:
     }
 
 
-def test_loads_jim_scale_example():
+def test_loads_sample_example():
     cfg = load_config(EXAMPLE)
     assert cfg.label == "blacksmith"
     assert cfg.preview.build["worker"] == "api"

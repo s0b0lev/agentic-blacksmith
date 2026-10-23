@@ -1,3 +1,5 @@
+# Sample adopter config: a FastAPI API (with a background worker and scheduler) and two
+# React SSR apps (admin and storefront), on Postgres, Redis, Meilisearch and MinIO.
 version: 1
 label: blacksmith                 # trigger label
 branch_prefix: blacksmith/issue-  # branch per issue
@@ -18,7 +20,7 @@ checks_setup:                     # run once before checks (pytest needs Postgre
   - docker compose -f ops/docker-compose.dev.yml up -d --wait
 checks:                           # what "verify" must run; `soft: true` is reported, not required
   - run: cd api && .venv/bin/ruff check . && .venv/bin/ruff format --check .
-    soft: true                    # mirrors CI: ~130 findings on main today, report-only until clean
+    soft: true                    # lint is reported, not required
   - run: cd admin && npm run typecheck
   - run: cd storefront && npm run typecheck
   - run: cd api && .venv/bin/pytest -q

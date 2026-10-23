@@ -83,7 +83,7 @@ def _base(cfg, ctx):
     ]  # fmt: skip
 
 
-def test_deploy_command_sequence_jim_scale(cfg, ctx, fake_runner):
+def test_deploy_command_sequence_sample(cfg, ctx, fake_runner):
     fake_runner.responses["docker run"] = CommandResult(0, "HASH\n", "")
     result = _run(cfg, ctx, fake_runner)
     assert result.ok and result.error is None

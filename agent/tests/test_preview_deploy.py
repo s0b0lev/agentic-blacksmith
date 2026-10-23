@@ -79,6 +79,7 @@ def _base(cfg, ctx):
         "docker", "compose", "-p", cfg.preview.project,
         "-f", str(ctx.repo_root / cfg.preview.compose),
         "-f", str(ctx.work_dir / "compose.override.yml"),
+        "-f", str(ctx.work_dir / "compose.extra.yml"),
     ]  # fmt: skip
 
 
@@ -89,9 +90,10 @@ def test_deploy_command_sequence_jim_scale(cfg, ctx, fake_runner):
     base = _base(cfg, ctx)
     compose = str(ctx.repo_root / cfg.preview.compose)
     override = str(ctx.work_dir / "compose.override.yml")
+    extra = str(ctx.work_dir / "compose.extra.yml")
     seed = (
         "export COMPOSE_PROJECT_NAME=blacksmith-preview "
-        f"COMPOSE_FILE={shlex.quote(compose + ':' + override)} COMPOSE_PATH_SEPARATOR=: "
+        f"COMPOSE_FILE={shlex.quote(compose + ':' + override + ':' + extra)} COMPOSE_PATH_SEPARATOR=: "
         f"&& cd {shlex.quote(str(ctx.repo_root / 'ops'))} && {cfg.preview.seed}"
     )
     assert fake_runner.calls == [
@@ -298,3 +300,21 @@ def test_changed_caddyfile_recreates_caddy(cfg, ctx, fake_runner):
     _run(cfg, moved, fake_runner)
     assert fake_runner.calls[-1] == _base(cfg, ctx) + [
         "up", "-d", "--no-deps", "--force-recreate", "caddy"]
+
+
+def test_no_extra_file_without_overrides(cfg, ctx, fake_runner):
+    from dataclasses import replace
+
+    (ctx.work_dir / "compose.extra.yml").write_text("stale")
+    cfg = replace(cfg, preview=replace(cfg.preview, overrides={}))
+    assert _run(cfg, ctx, fake_runner).ok
+    assert not (ctx.work_dir / "compose.extra.yml").exists()
+    assert not any("compose.extra.yml" in " ".join(c) for c in fake_runner.calls)
+
+
+def test_extra_file_written_and_passed_last(cfg, ctx, fake_runner):
+    assert _run(cfg, ctx, fake_runner).ok
+    assert "bitnamilegacy/minio" in (ctx.work_dir / "compose.extra.yml").read_text()
+    up = fake_runner.calls[-1]
+    files = [up[i + 1] for i, a in enumerate(up) if a == "-f"]
+    assert files[-1] == str(ctx.work_dir / "compose.extra.yml")

@@ -2,11 +2,13 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import yaml
 
 from blacksmith.config import Route, load_config
 from blacksmith.preview import (
     BasicAuth,
     compose_service_names,
+    render_extra,
     render_caddyfile,
     render_override,
 )
@@ -42,7 +44,40 @@ def test_override_build_replaces_image(preview):
 
 
 def test_override_images_map(preview):
-    assert "    image: bitnamilegacy/minio:2025.4.22\n" in _override(preview)
+    swapped = replace(preview, images={"redis": "redis:7.4"}, reset={})
+    out = render_override(swapped, ["redis"], caddyfile_path=CADDYFILE, repo_root=REPO)
+    assert "  redis:\n    ports: !reset []\n    image: redis:7.4\n" in out
+
+
+def test_override_reset_lines(preview):
+    out = _override(preview)
+    assert (
+        "  minio:\n    ports: !reset []\n    command: !reset null\n"
+        "    healthcheck: !reset null\n    volumes: !reset null\n"
+    ) in out
+
+
+def test_override_reset_skips_keys_already_set(preview):
+    both = replace(preview, reset={"api": ("ports", "image", "command")})
+    out = _override(both)
+    assert "  api:\n    ports: !reset []\n    build:\n      context: /srv/app/api\n" \
+        "    image: !reset null\n    command: !reset null\n" in out
+
+
+def test_extra_file_renders_overrides_verbatim(preview):
+    text = render_extra(preview)
+    data = yaml.safe_load(text)
+    assert list(data) == ["services"]
+    minio = data["services"]["minio"]
+    assert minio["image"] == "bitnamilegacy/minio:2025.4.22"
+    assert minio["environment"]["MINIO_DEFAULT_BUCKETS"] == "product-images:download"
+    assert minio["environment"]["MINIO_ROOT_USER"] == "${MINIO_ACCESS_KEY:-sampleshop}"
+    assert minio["volumes"] == ["minio-data:/bitnami/minio/data"]
+    assert "!reset" not in text
+
+
+def test_extra_file_none_without_overrides(preview):
+    assert render_extra(replace(preview, overrides={})) is None
 
 
 def test_override_build_wins_over_images(preview):

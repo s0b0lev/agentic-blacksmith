@@ -31,8 +31,25 @@ preview:
     beat: api
     admin: admin
     storefront: storefront
-  images:                         # optional: replace unpullable images without touching the repo
-    minio: bitnamilegacy/minio:2025.4.22    # minio/minio:latest is no longer pullable (see dev compose)
+  # MinIO recipe: minio/minio:latest is no longer pullable, so the preview runs the Bitnami
+  # image, which has a different data path and no `mc`, and creates the public bucket itself
+  # (replacing minio-init). `reset` clears the prod keys that do not fit; `overrides` are
+  # compose service fragments applied last.
+  reset:
+    minio: [command, healthcheck, volumes]
+  overrides:
+    minio:
+      image: bitnamilegacy/minio:2025.4.22
+      environment:
+        MINIO_ROOT_USER: "${MINIO_ACCESS_KEY:-sampleshop}"
+        MINIO_ROOT_PASSWORD: "${MINIO_SECRET_KEY}"
+        MINIO_DEFAULT_BUCKETS: "product-images:download"
+      volumes: ["minio-data:/bitnami/minio/data"]
+      healthcheck:
+        test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+        interval: 10s
+        timeout: 5s
+        retries: 10
   drop: [minio-init]              # services to leave out of the preview
   env_example: ops/.env.prod.example   # copied to .env; `change-me` / empty values get generated
   env:                                 # explicit overrides written to .env after generation

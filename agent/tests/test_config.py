@@ -26,6 +26,29 @@ def test_loads_jim_scale_example():
     assert cfg.checks[0].soft is True
     assert cfg.checks[1] == Check(run="cd admin && npm run typecheck")
     assert cfg.preview.auth == "basic"
+    assert cfg.preview.images == {}
+    assert cfg.preview.reset == {"minio": ("command", "healthcheck", "volumes")}
+    assert cfg.preview.overrides["minio"]["image"] == "bitnamilegacy/minio:2025.4.22"
+
+
+def test_overrides_and_reset_parsed():
+    data = minimal()
+    data["preview"]["overrides"] = {"web": {"image": "x:1", "environment": {"A": "b"}}}
+    data["preview"]["reset"] = {"web": ["command", "healthcheck"]}
+    preview = parse_config(data).preview
+    assert preview.overrides == {"web": {"image": "x:1", "environment": {"A": "b"}}}
+    assert preview.reset == {"web": ("command", "healthcheck")}
+
+
+def test_overrides_and_reset_validated():
+    data = minimal()
+    data["preview"]["overrides"] = {"web": "image: x"}
+    data["preview"]["reset"] = {"web": "command"}
+    with pytest.raises(ConfigError) as exc:
+        parse_config(data)
+    lines = str(exc.value).splitlines()
+    assert any(line.startswith("preview.overrides:") for line in lines)
+    assert any(line.startswith("preview.reset:") for line in lines)
 
 
 def test_check_as_plain_string():
@@ -50,6 +73,7 @@ def test_defaults():
     assert cfg.preview.ready == "https://${PREVIEW_HOST}/"
     assert cfg.preview.auth == "basic"
     assert cfg.preview.build == {} and cfg.preview.images == {}
+    assert cfg.preview.overrides == {} and cfg.preview.reset == {}
     assert cfg.preview.drop == () and cfg.preview.infra == ()
     assert cfg.preview.env == {}
     assert cfg.preview.env_example is None and cfg.preview.seed is None

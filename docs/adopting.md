@@ -327,6 +327,12 @@ publishes ports 80 and 443 and routes to your services.
   the work branch instead of using their `image:`.
 - `images`: a map of service name to image. Replaces that service's `image:` without touching
   your repository (see section 10).
+- `reset`: a map of service name to a list of service keys (such as `command`, `healthcheck`,
+  `volumes`) to clear from your compose file, using compose's `!reset` tag. Use it when a
+  replacement image needs different settings (see section 10).
+- `overrides`: a map of service name to a compose service fragment (any keys a compose service
+  accepts). The fragments are written verbatim to a third compose file applied after the
+  generated override, so they win. `${VAR}` references are resolved by compose from `.env`.
 - `drop`: services to leave out of the preview. A dropped service must not be a `depends_on`
   target of a kept service, or the preview refuses to start.
 - `env_example`: an example env file copied to `.env` next to the compose file (compose's
@@ -377,20 +383,42 @@ URL. [operations.md](operations.md) explains what happens next and where to look
 ## 10. Images your compose file can no longer pull
 
 Production compose files sometimes reference images that are no longer pullable, for example
-a `latest` tag that was removed. The preview would fail on `docker compose up`. Two keys work
+a `latest` tag that was removed. The preview would fail on `docker compose up`. Four keys work
 around this without changing your repository:
 
-- `preview.images` replaces a service's image.
+- `preview.images` replaces a service's image when the replacement is a drop-in.
+- `preview.reset` clears service keys that do not fit the replacement image.
+- `preview.overrides` sets the replacement's own settings.
 - `preview.drop` leaves a service out entirely.
 
-The sample-shop example does both for MinIO:
+The sample-shop example's MinIO recipe uses the last three. `minio/minio:latest` is no longer
+pullable, and the Bitnami image that replaces it stores data under `/bitnami/minio/data`, has
+no `mc` for the production healthcheck, starts the server itself (so the production
+`command: server /data ...` must go), and creates the public bucket from
+`MINIO_DEFAULT_BUCKETS`, which replaces the dropped `minio-init` service:
 
 ```yaml
 preview:
-  images:
-    minio: bitnamilegacy/minio:2025.4.22   # minio/minio:latest is no longer pullable
-  drop: [minio-init]                       # services to leave out of the preview
+  reset:
+    minio: [command, healthcheck, volumes]
+  overrides:
+    minio:
+      image: bitnamilegacy/minio:2025.4.22
+      environment:
+        MINIO_ROOT_USER: "${MINIO_ACCESS_KEY:-sampleshop}"
+        MINIO_ROOT_PASSWORD: "${MINIO_SECRET_KEY}"
+        MINIO_DEFAULT_BUCKETS: "product-images:download"
+      volumes: ["minio-data:/bitnami/minio/data"]
+      healthcheck:
+        test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+        interval: 10s
+        timeout: 5s
+        retries: 10
+  drop: [minio-init]
 ```
+
+Bitnami requires `MINIO_ROOT_USER` of at least 3 characters and `MINIO_ROOT_PASSWORD` of at
+least 8; generated passwords are long enough.
 
 This only patches the preview. Fixing the image references in your repository's compose file
 is the better long-term move, because your production deploy has the same problem.

@@ -115,12 +115,18 @@ def render_override(
             out.append('    profiles: ["blacksmith-dropped"]')
             continue
         out.append("    ports: !reset []")
+        done = {"ports"}
         if name in preview.build:
             out.append("    build:")
             out.append(f"      context: {repo_root / preview.build[name]}")
             out.append("    image: !reset null")
+            done.add("image")
         elif name in preview.images:
             out.append(f"    image: {preview.images[name]}")
+            done.add("image")
+        for key in preview.reset.get(name, ()):
+            if key not in done:
+                out.append(f"    {key}: !reset null")
     out += [
         "  caddy:",
         "    image: caddy:2",
@@ -133,6 +139,13 @@ def render_override(
         "  caddy-data: {}",
     ]
     return "\n".join(out) + "\n"
+
+
+def render_extra(preview: Preview) -> str | None:
+    """``preview.overrides`` as a compose file (applied after the override), or None."""
+    if not preview.overrides:
+        return None
+    return yaml.safe_dump({"services": preview.overrides}, sort_keys=False)
 
 
 _REWRITE = re.compile(r"^(?P<prefix>/\S*?)/\* -> /\*$")
@@ -251,6 +264,12 @@ def _write_inputs(
         repo_root=ctx.repo_root,
     )
     (ctx.work_dir / "compose.override.yml").write_text(override)
+    extra = ctx.work_dir / "compose.extra.yml"
+    extra_text = render_extra(preview)
+    if extra_text is not None:
+        extra.write_text(extra_text)
+    elif extra.exists():
+        extra.unlink()
     return env_path, generated, previous is not None and previous != text
 
 
@@ -347,6 +366,8 @@ def deploy(
     # against the first file's directory, the same for `up` and for the seed.
     override = ctx.work_dir / "compose.override.yml"
     files = [compose_path, override]
+    if preview.overrides:  # last, so the adopter's fragments win
+        files.append(ctx.work_dir / "compose.extra.yml")
     base = ["docker", "compose", "-p", preview.project]
     for f in files:
         base += ["-f", str(f)]

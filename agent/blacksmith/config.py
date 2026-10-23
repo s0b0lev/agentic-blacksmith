@@ -57,6 +57,8 @@ class Preview:
     project: str
     build: dict[str, str]
     images: dict[str, str]
+    overrides: dict[str, dict]
+    reset: dict[str, tuple[str, ...]]
     drop: tuple[str, ...]
     env_example: str | None
     env: dict[str, str]
@@ -199,9 +201,39 @@ def _routes(ctx: _Ctx, raw: Any) -> tuple[Route, ...]:
     return tuple(out)
 
 
+def _overrides(ctx: _Ctx, raw: Any) -> dict[str, dict]:
+    """``preview.overrides``: service name -> raw compose service fragment."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or not all(
+        isinstance(k, str) and k and isinstance(v, dict) for k, v in raw.items()
+    ):
+        ctx.err("preview.overrides", "must be a mapping of service name to mapping")
+        return {}
+    return {k: dict(v) for k, v in raw.items()}
+
+
+_KEY = re.compile(r"^[a-z_]+$")
+
+
+def _reset(ctx: _Ctx, raw: Any) -> dict[str, tuple[str, ...]]:
+    """``preview.reset``: service name -> service keys reset with ``!reset``."""
+    if raw is None:
+        return {}
+    ok = isinstance(raw, dict) and all(
+        isinstance(k, str) and k and isinstance(v, list)
+        and all(isinstance(i, str) and _KEY.match(i) for i in v)
+        for k, v in raw.items()
+    )
+    if not ok:
+        ctx.err("preview.reset", "must be a mapping of service name to a list of service keys")
+        return {}
+    return {k: tuple(v) for k, v in raw.items()}
+
+
 def _preview(ctx: _Ctx, raw: Any) -> Preview:
-    allowed = {"compose", "project", "build", "images", "drop", "env_example", "env",
-               "infra", "seed", "routes", "ready", "auth"}
+    allowed = {"compose", "project", "build", "images", "overrides", "reset", "drop",
+               "env_example", "env", "infra", "seed", "routes", "ready", "auth"}
     d = ctx.section(raw, "preview", allowed, required=True)
     auth = ctx.string(d, "auth", "preview", default="basic")
     if auth not in _AUTH:
@@ -212,6 +244,8 @@ def _preview(ctx: _Ctx, raw: Any) -> Preview:
         project=ctx.string(d, "project", "preview", default="", required=True) or "",
         build=ctx.str_map(d, "build", "preview"),
         images=ctx.str_map(d, "images", "preview"),
+        overrides=_overrides(ctx, d.get("overrides")),
+        reset=_reset(ctx, d.get("reset")),
         drop=ctx.strings(d, "drop", "preview"),
         env_example=ctx.string(d, "env_example", "preview"),
         env=ctx.str_map(d, "env", "preview"),

@@ -1,0 +1,51 @@
+version: 1
+label: blacksmith                 # trigger label
+branch_prefix: blacksmith/issue-  # branch per issue
+droplet:
+  size: s-4vcpu-8gb
+  region: fra1
+  image: ubuntu-24-04-x64
+limits:
+  first_run_minutes: 120          # stages 1–6 wall clock
+  review_round_minutes: 45
+  max_turns_per_stage: 200
+  lifetime_hours: 168             # hard cap, droplet self-destructs after 7 days
+setup:                            # run once by bootstrap, as the agent user, in repo root
+  - cd api && uv venv --python 3.12 && uv pip install -e . "pyvips[binary]" ruff pytest
+  - cd admin && npm ci
+  - cd storefront && npm ci
+checks_setup:                     # run once before checks (pytest needs Postgres/Redis/Meili on localhost)
+  - docker compose -f ops/docker-compose.dev.yml up -d --wait
+checks:                           # what "verify" must run; `soft: true` is reported, not required
+  - run: cd api && .venv/bin/ruff check . && .venv/bin/ruff format --check .
+    soft: true                    # mirrors CI: ~130 findings on main today, report-only until clean
+  - run: cd admin && npm run typecheck
+  - run: cd storefront && npm run typecheck
+  - run: cd api && .venv/bin/pytest -q
+preview:
+  compose: ops/docker-compose.prod.yml
+  project: blacksmith-preview
+  build:                          # services whose `image:` is replaced by a build from the branch
+    api: api
+    worker: api
+    beat: api
+    admin: admin
+    storefront: storefront
+  images:                         # optional: replace unpullable images without touching the repo
+    minio: bitnamilegacy/minio:2025.4.22    # minio/minio:latest is no longer pullable (see dev compose)
+  drop: [minio-init]              # services to leave out of the preview
+  env_example: ops/.env.prod.example   # copied to .env; `change-me` / empty values get generated
+  env:                                 # explicit overrides written to .env after generation
+    COOKIE_SECURE: "true"
+    MINIO_PUBLIC_URL: "https://${PREVIEW_HOST}/media/product-images"
+  infra: [db, minio, redis, meilisearch]   # brought up first, before `seed`
+  seed: docker compose run --rm api python scripts/init_dev_db.py   # runs before the app services
+  routes:                              # Caddy, in order; targets are compose service:port
+    - { path: "/admin*",  to: "admin:3000" }
+    - { path: "/media/*", to: "minio:9000", rewrite: "/media/* -> /*" }
+    - { path: "/*",       to: "storefront:3001" }
+  ready: "https://${PREVIEW_HOST}/"    # URL that must return 2xx/3xx before "preview up"
+  auth: basic                          # Caddy basic auth; credentials generated per droplet, posted in the PR body
+design:
+  figma: true                     # enable the design-check stage when FIGMA_API_KEY is set
+  paths: ["storefront/"]          # only changes under these paths trigger it

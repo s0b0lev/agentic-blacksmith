@@ -234,7 +234,7 @@ def _design_skip_reason(cfg: Config, ctx: RunContext, run: CommandRunner) -> str
         return "figma disabled in blacksmith.yml"
     if not ctx.env.get("FIGMA_API_KEY"):
         return "FIGMA_API_KEY not set"
-    changed = git.changed_paths(ctx.repo_root, ctx.base_branch, run)
+    changed = git.changed_paths(ctx.repo_root, f"origin/{ctx.base_branch}", run)
     if not any(p.startswith(prefix) for p in changed for prefix in cfg.design.paths):
         return f"no changes under {', '.join(cfg.design.paths)}"
     return None
@@ -331,6 +331,8 @@ def salvage(cfg, ctx, gh, run, state, env, reason: str) -> None:
                               body=body, draft=True)
         except Exception as exc:
             _log(ctx, env, f"salvage create_pr failed: {exc!r}")
+            _milestone(gh, ctx, state, env, f"Stopped at stage {stage}: {reason}. "
+                       "Could not open a draft PR (see runner log).")
             return
         state.pr_number, state.pr_url = pr.number, pr.url
         _milestone(gh, ctx, state, env,

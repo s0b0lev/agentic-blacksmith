@@ -293,7 +293,7 @@ def test_design_skipped_when_no_storefront_changes(tmp_path):
     e = make_env(tmp_path, changed="api/app/main.py\n")
     go(e)
     assert "design" not in e.claude.names
-    assert ["git", "diff", "--name-only", "main...HEAD"] in e.run.calls
+    assert ["git", "diff", "--name-only", "origin/main...HEAD"] in e.run.calls
     assert (e.ctx.work_dir / "design.md").read_text().startswith(
         "Skipped: no changes under storefront/")
 
@@ -354,6 +354,8 @@ def test_salvage_survives_create_pr_failure(tmp_path):
     assert state.stage == "salvaged" and state.pr_number is None
     log = (e.ctx.work_dir / "log.md").read_text()
     assert "rejected" in log and "gh down" in log
+    assert ("Stopped at stage plan: plan.md not written. Could not open a draft PR "
+            "(see runner log).") in e.gh.upserts[-1][2]
 
 
 def test_load_prompt_keeps_unknown_braces(tmp_path):

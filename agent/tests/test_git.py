@@ -62,7 +62,7 @@ def test_push_assets_command_sequence_and_url(tmp_path, fake_runner, remote):
     fake_runner.responses["git write-tree"] = CommandResult(0, "tree123\n", "")
     fake_runner.responses["git -c user.name"] = CommandResult(0, "sha456\n", "")
     url = git.push_assets(REPO, tmp_path, ASSETS, fake_runner)
-    assert url == f"https://raw.githubusercontent.com/acme/shop/{ASSETS}/"
+    assert url == f"https://github.com/acme/shop/raw/{ASSETS}/"
     calls = fake_runner.calls
     assert calls[0] == ["git", "remote", "get-url", "origin"]
     assert calls[1] == ["git", f"--work-tree={tmp_path}", "add", "-f", "--all"]

@@ -397,7 +397,7 @@ def test_pr_screenshot_links_rewritten(tmp_path):
     e.claude.actions["verify"] = _write(
         "verify.md", "RESULT: pass\nSee ![home](shots/01-home.png)\n")
     go(e)
-    base = "https://raw.githubusercontent.com/acme/shop/blacksmith-assets/issue-7/"
+    base = "https://github.com/acme/shop/raw/blacksmith-assets/issue-7/"
     body = e.gh.prs[0]["body"]
     assert f"![Home]({base}01-home.png)" in body
     assert f"![home]({base}01-home.png)" in body

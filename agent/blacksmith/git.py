@@ -49,7 +49,7 @@ def push_assets(repo: Path, shots_dir: Path, branch: str, run: CommandRunner) ->
     """Force-push the PNGs in ``shots_dir`` as a parentless commit to ``branch``.
 
     Uses a throwaway index so the repository's own index and work tree are untouched.
-    Returns the raw.githubusercontent.com base URL, or None when there are no PNGs.
+    Returns the github.com/<owner>/<name>/raw/<branch>/ base URL, or None without PNGs.
     """
     if not any(shots_dir.glob("*.png")):
         return None
@@ -65,4 +65,4 @@ def push_assets(repo: Path, shots_dir: Path, branch: str, run: CommandRunner) ->
     commit = _git(repo, [*BOT_IDENTITY, "commit-tree", tree,
                          "-m", f"blacksmith assets for {branch}"], run).stdout.strip()
     _git(repo, ["push", "-f", "origin", f"{commit}:refs/heads/{branch}"], run)
-    return f"https://raw.githubusercontent.com/{owner}/{name}/{branch}/"
+    return f"https://github.com/{owner}/{name}/raw/{branch}/"

@@ -54,10 +54,11 @@ If bootstrap failed, `/var/log/blacksmith-bootstrap.log` ends with a `FATAL:` li
 The droplet's SSH key exists only in the Terraform state. To read it, initialise Terraform
 against the same backend the workflow uses.
 
-1. Install Terraform 1.9 or newer, and clone the template at the ref your workflow uses:
+1. Install Terraform 1.9 or newer, and clone the template at the ref your workflow pins
+   (`v1`, or `feat/v1-template` while running the end-to-end checklist before `v1` exists):
 
    ```sh
-   git clone --branch v1 https://github.com/s0b0lev/agentic-blacksmith.git
+   git clone --branch <the ref your workflow pins, e.g. v1> https://github.com/s0b0lev/agentic-blacksmith.git
    cd agentic-blacksmith/terraform
    ```
 
@@ -155,14 +156,22 @@ The droplet sends the same event when `limits.lifetime_hours` is over, after pos
 cancelled tear-down left behind. It lists droplets tagged `blacksmith` older than a number of
 hours (default 168) and deletes them. It needs `curl`, `jq` and a DigitalOcean API token.
 
+The `blacksmith` tag spans every repository that shares the DigitalOcean account. Without
+`--repo`, `MAX_AGE_HOURS` must be at least the largest `limits.lifetime_hours` of any of those
+repositories, or the script deletes a healthy droplet of a repository with a longer lifetime.
+`--repo OWNER/NAME` keeps only droplets tagged `repo:<slug>` of that repository.
+
 ```sh
 export DIGITALOCEAN_TOKEN='<DIGITALOCEAN_TOKEN>'
-docs/cleanup-droplets.sh --dry-run        # list droplets older than 168 hours
-docs/cleanup-droplets.sh --dry-run 24     # list droplets older than 24 hours
-docs/cleanup-droplets.sh 24               # delete them
+docs/cleanup-droplets.sh --dry-run                    # list all droplets older than 168 hours
+docs/cleanup-droplets.sh --dry-run --repo acme/shop   # only acme/shop's droplets
+docs/cleanup-droplets.sh --repo acme/shop 24          # delete acme/shop's droplets older than 24 hours
 ```
 
-The script deletes droplets only. The droplet name is `blacksmith-<repo>-issue-<n>`, and its
+The script deletes droplets only. The droplet name is
+`blacksmith-<owner-name-slug>-issue-<n>`, where the slug is `owner/name` lowercased with every
+run of characters outside `a-z`, `0-9` and `-` replaced by `-`; for example
+`acme/sample-shop` issue 42 is `blacksmith-acme-sample-shop-issue-42`. Its
 firewall, SSH key, DNS record and Terraform workspace stay behind. To remove those, send the
 `blacksmith-self-destruct` event for that issue (above): `terraform destroy` notices the
 droplet is gone and removes the rest.

@@ -47,6 +47,21 @@ def test_cleanup_script_dry_run_without_token_fails_clearly():
     assert "DIGITALOCEAN_TOKEN" in res.stderr
 
 
+def test_cleanup_script_documents_repo_filter_and_rejects_unknown_flags():
+    help_res = subprocess.run(
+        ["bash", str(CLEANUP), "--help"], capture_output=True, text=True, timeout=30,
+    )
+    assert help_res.returncode == 0
+    assert "--repo" in help_res.stdout + help_res.stderr
+    env = {**os.environ, "DIGITALOCEAN_TOKEN": "unused"}
+    res = subprocess.run(
+        ["bash", str(CLEANUP), "--dry-run", "--bogus"],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+    assert res.returncode != 0
+    assert "--bogus" in res.stderr
+
+
 def test_docs_exist_and_link():
     readme = README.read_text()
     assert "docs/adopting.md" in readme

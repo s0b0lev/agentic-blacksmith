@@ -1,0 +1,23 @@
+#cloud-config
+# Rendered by main.tf with templatefile(). File contents sit in literal block scalars (|),
+# so YAML keeps every character of the KEY=value lines; newlines inside values are unsupported.
+package_update: true
+
+write_files:
+  - path: /etc/blacksmith/env
+    owner: root:root
+    permissions: '0600'
+    content: |
+      ${indent(6, env_content)}
+  - path: /etc/blacksmith/config
+    owner: root:root
+    permissions: '0644'
+    content: |
+      ${indent(6, config_content)}
+
+runcmd:
+  - mkdir -p /opt/blacksmith
+  - curl -fsSL https://github.com/${template_repo}/archive/${template_ref}.tar.gz | tar -xz --strip-components=1 -C /opt/blacksmith
+  - bash /opt/blacksmith/agent/bootstrap.sh
+
+final_message: "blacksmith cloud-init done after $UPTIME s"

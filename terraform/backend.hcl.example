@@ -1,0 +1,23 @@
+# Copy to backend.hcl and run: terraform init -backend-config=backend.hcl
+# Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (a Spaces access key).
+bucket = "my-blacksmith-state"
+key    = "blacksmith/terraform.tfstate"
+# Spaces ignores the region, but the S3 backend requires one; the real location is the endpoint.
+region = "us-east-1"
+
+endpoints = {
+  s3 = "https://fra1.digitaloceanspaces.com"
+}
+
+# Spaces has no AWS STS: do not try to validate the keys against AWS.
+skip_credentials_validation = true
+# "us-east-1" is a placeholder, not checked against the AWS region list.
+skip_region_validation = true
+# There is no AWS account behind Spaces, so do not look up an account ID.
+skip_requesting_account_id = true
+# Not running on EC2: do not query the instance metadata service for credentials.
+skip_metadata_api_check = true
+# Spaces does not support the newer S3 checksum headers the AWS SDK sends by default.
+skip_s3_checksum = true
+# Spaces supports virtual-hosted-style URLs (<bucket>.fra1.digitaloceanspaces.com).
+use_path_style = false

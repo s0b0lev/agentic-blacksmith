@@ -34,7 +34,8 @@ label "blacksmith" on an issue
    `blacksmith.yml`.
 3. Add the `blacksmith` label to an issue.
 
-The full guide, with every name to type, is [docs/adopting.md](docs/adopting.md). When
+This repository must be public: adopters call its reusable workflows, and each droplet
+clones it. The full guide, with every name to type, is [docs/adopting.md](docs/adopting.md). When
 something goes wrong, read [docs/operations.md](docs/operations.md).
 
 ## Status

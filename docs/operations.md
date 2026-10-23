@@ -143,7 +143,8 @@ on the pull request (or on the issue when there is no pull request).
 
 - Close the pull request (merged or not).
 - Remove the `blacksmith` label from the issue. This is the way to stop work before a pull
-  request exists; it also works after.
+  request exists. Once a pull request is open, removing the label does nothing; close the
+  pull request instead.
 - Send the `blacksmith-self-destruct` event yourself:
 
   ```sh
@@ -178,7 +179,17 @@ run of characters outside `a-z`, `0-9` and `-` replaced by `-`; for example
 `acme/sample-shop` issue 42 is `blacksmith-acme-sample-shop-issue-42`. Its
 firewall, SSH key, DNS record and Terraform workspace stay behind. To remove those, send the
 `blacksmith-self-destruct` event for that issue (above): `terraform destroy` notices the
-droplet is gone and removes the rest.
+droplet is gone and removes the rest. If the tear-down workflow cannot run, initialise
+Terraform as in "SSH into the droplet" (steps 1 to 3) and destroy the workspace by hand. Only
+`do_token` must be real; the other required variables just need a value:
+
+```sh
+terraform workspace select issue-12
+terraform destroy -input=false -auto-approve \
+  -var "do_token=$DIGITALOCEAN_TOKEN" -var "repo=acme/shop" -var "issue_number=12" \
+  -var "template_ref=v1" -var "claude_oauth_token=unused" -var "github_token=unused"
+terraform workspace select default && terraform workspace delete issue-12
+```
 
 ## Caveats
 

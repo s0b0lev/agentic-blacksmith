@@ -115,9 +115,31 @@ def test_adopter_example_routes_all_three_events():
     assert jobs["tear-down"]["needs"] == "resolve"
     assert "needs.resolve.outputs.issue" in str(jobs["tear-down"]["with"]["issue"])
 
+    assert "needs.resolve.outputs.issue != ''" in tear_if
+
     resolve = yaml.safe_dump(jobs["resolve"])
     for source in ("github.event.issue.number", "blacksmith/issue-", "client_payload.issue"):
         assert source in resolve, source
+
+
+def test_adopter_unlabel_skips_tear_down_when_pr_is_open():
+    resolve = _load(ADOPTER)["jobs"]["resolve"]
+    assert resolve["permissions"] == {"pull-requests": "read"}
+    step = resolve["steps"][0]
+    assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
+    script = step["run"]
+    assert ('gh pr list --repo "$REPO" --head "blacksmith/issue-$n" --state open '
+            "--json number --jq length") in script
+    skip = script.index('echo "issue=" >> "$GITHUB_OUTPUT"')
+    assert script.index('if [ "$EVENT_NAME" = issues ]') < skip
+    assert skip < script.index('echo "issue=$n" >> "$GITHUB_OUTPUT"')
+
+
+@pytest.mark.parametrize("path", [SPIN_UP, TEAR_DOWN], ids=lambda p: p.name)
+def test_terraform_version_pinned(path):
+    steps = [s for job in _load(path)["jobs"].values() for s in job["steps"]]
+    setup = next(s for s in steps if str(s.get("uses", "")).startswith("hashicorp/setup-terraform"))
+    assert setup["with"]["terraform_version"] == "1.9.8"
 
 
 @pytest.mark.parametrize("path", [SPIN_UP, TEAR_DOWN], ids=lambda p: p.name)

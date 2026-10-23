@@ -8,6 +8,10 @@ Times are measured from the moment you add the label. The sample-shop limits are
 
 ## Before you start
 
+- [ ] `s0b0lev/agentic-blacksmith` is public (Settings → General → Danger Zone → Change
+      visibility), so sample-shop can call its reusable workflows and the droplet can clone
+      it.
+- [ ] The `feat/v1-template` branch is pushed to `s0b0lev/agentic-blacksmith`.
 - [ ] sample-shop has all six secrets and `BLACKSMITH_STATE_BUCKET` set, as in
       [adopting.md](adopting.md) step 7 (`BLACKSMITH_PREVIEW_ZONE` is optional).
 - [ ] sample-shop has `.github/workflows/blacksmith.yml` and `blacksmith.yml` from
@@ -34,12 +38,34 @@ Times are measured from the moment you add the label. The sample-shop limits are
 - [ ] Leave one review comment on the pull request asking for a small, checkable change.
 - [ ] Within 45 minutes (`review_round_minutes`, plus up to a minute for the poll timer):
       a reply to your comment that ends with a commit sha, a new commit on the branch, and
-      a comment starting `Round 1: addressed 1 comment(s) in <sha>`.
+      a comment reading exactly `Round 1: addressed 1 comment(s) in <sha>; preview ok`.
+- [ ] After the round, the preview URL still loads with the same login as before, and shows
+      the requested change.
 - [ ] Close the pull request without merging.
 - [ ] Within ~5 minutes: the pull request has a "Preview server destroyed." comment, and the
       DigitalOcean console shows no droplet for this issue.
 - [ ] The branch `blacksmith-assets/issue-<n>` no longer exists in sample-shop.
 - [ ] Delete the `blacksmith/issue-<n>` branch and close the throwaway issue.
+
+## Self-destruct (second throwaway issue)
+
+- [ ] Create a second throwaway issue and add the `blacksmith` label. Wait for the "working
+      on this" comment and for the progress comment's `### Plan` section.
+- [ ] SSH into the droplet (see [operations.md](operations.md)) and run
+      `sudo systemctl start blacksmith-lifetime.service`.
+- [ ] Within ~5 minutes: an "expired" comment on the issue (or the pull request, if one is
+      already open), a tear-down run in sample-shop, a "Preview server destroyed." comment,
+      and no droplet for this issue in the DigitalOcean console.
+- [ ] Delete the `blacksmith/issue-<n>` branch and close the issue.
+
+## Unlabel before a pull request (third throwaway issue)
+
+- [ ] Create a third throwaway issue and add the `blacksmith` label. Wait for the "working on
+      this" comment.
+- [ ] Before a pull request exists, remove the `blacksmith` label.
+- [ ] Within ~5 minutes: a tear-down run in sample-shop, a "Preview server destroyed."
+      comment on the issue, and no droplet for this issue in the DigitalOcean console.
+- [ ] Delete the `blacksmith/issue-<n>` branch and close the issue.
 
 ## After it passes
 

@@ -36,6 +36,8 @@ jobs:
       || (github.event_name == 'pull_request' && github.event.action == 'closed' && startsWith(github.event.pull_request.head.ref, 'blacksmith/issue-'))
       || github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
     outputs:
       issue: ${{ steps.issue.outputs.issue }}
     steps:
@@ -46,6 +48,8 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PAYLOAD_ISSUE: ${{ github.event.client_payload.issue }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           case "$EVENT_NAME" in
             issues) n="$ISSUE_NUMBER" ;;
@@ -57,14 +61,25 @@ jobs:
             echo "::error::cannot resolve an issue number from the $EVENT_NAME event (got '$n')"
             exit 1
           fi
+          # Removing the label stops work only before a pull request exists; after that,
+          # closing the pull request tears the droplet down.
+          if [ "$EVENT_NAME" = issues ]; then
+            open="$(gh pr list --repo "$REPO" --head "blacksmith/issue-$n" --state open --json number --jq length)"
+            if [ "$open" -ge 1 ]; then
+              echo "::notice::issue #$n has an open pull request; close it to tear the droplet down"
+              echo "issue=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           echo "issue=$n" >> "$GITHUB_OUTPUT"
 
   tear-down:
     needs: resolve
     if: >-
-      (github.event_name == 'issues' && github.event.action == 'unlabeled' && github.event.label.name == 'blacksmith')
+      ((github.event_name == 'issues' && github.event.action == 'unlabeled' && github.event.label.name == 'blacksmith')
       || (github.event_name == 'pull_request' && github.event.action == 'closed' && startsWith(github.event.pull_request.head.ref, 'blacksmith/issue-'))
-      || github.event_name == 'repository_dispatch'
+      || github.event_name == 'repository_dispatch')
+      && needs.resolve.outputs.issue != ''
     uses: s0b0lev/agentic-blacksmith/.github/workflows/tear-down.yml@v1
     with:
       issue: ${{ fromJSON(needs.resolve.outputs.issue) }}

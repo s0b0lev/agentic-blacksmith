@@ -24,7 +24,8 @@ It does not fit if:
 - Setup needs secrets or private networks that you cannot give to a throwaway server.
 
 You also need: a GitHub repository you own (see step 2), a DigitalOcean account, and a Claude
-Pro or Max subscription.
+Pro or Max subscription. The template repository (`s0b0lev/agentic-blacksmith`) must be
+public: your workflow calls its reusable workflows, and the droplet clones it.
 
 ## 2. Create the GitHub token
 
@@ -230,6 +231,8 @@ jobs:
       || (github.event_name == 'pull_request' && github.event.action == 'closed' && startsWith(github.event.pull_request.head.ref, 'blacksmith/issue-'))
       || github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
     outputs:
       issue: ${{ steps.issue.outputs.issue }}
     steps:
@@ -240,6 +243,8 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PAYLOAD_ISSUE: ${{ github.event.client_payload.issue }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           case "$EVENT_NAME" in
             issues) n="$ISSUE_NUMBER" ;;
@@ -251,14 +256,25 @@ jobs:
             echo "::error::cannot resolve an issue number from the $EVENT_NAME event (got '$n')"
             exit 1
           fi
+          # Removing the label stops work only before a pull request exists; after that,
+          # closing the pull request tears the droplet down.
+          if [ "$EVENT_NAME" = issues ]; then
+            open="$(gh pr list --repo "$REPO" --head "blacksmith/issue-$n" --state open --json number --jq length)"
+            if [ "$open" -ge 1 ]; then
+              echo "::notice::issue #$n has an open pull request; close it to tear the droplet down"
+              echo "issue=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           echo "issue=$n" >> "$GITHUB_OUTPUT"
 
   tear-down:
     needs: resolve
     if: >-
-      (github.event_name == 'issues' && github.event.action == 'unlabeled' && github.event.label.name == 'blacksmith')
+      ((github.event_name == 'issues' && github.event.action == 'unlabeled' && github.event.label.name == 'blacksmith')
       || (github.event_name == 'pull_request' && github.event.action == 'closed' && startsWith(github.event.pull_request.head.ref, 'blacksmith/issue-'))
-      || github.event_name == 'repository_dispatch'
+      || github.event_name == 'repository_dispatch')
+      && needs.resolve.outputs.issue != ''
     uses: s0b0lev/agentic-blacksmith/.github/workflows/tear-down.yml@v1
     with:
       issue: ${{ fromJSON(needs.resolve.outputs.issue) }}
@@ -370,13 +386,23 @@ URL. [operations.md](operations.md) explains what happens next and where to look
 - Seed data and integrations are used as-is. Nothing forces sandbox mode. If your
   `env_example`, `env` or seed script points at real payment, email or SMS providers, the
   preview uses them.
-- GitHub Free private repositories have no branch protection. The only guard against the
-  agent pushing to your default branch is the pre-push hook on the droplet, which allows
-  pushes to the work branch and `blacksmith-assets/issue-<n>` only.
+- GitHub Free private repositories have no branch protection. The pre-push hook on the
+  droplet allows pushes to the work branch and `blacksmith-assets/issue-<n>` only, but it is
+  a guard against mistakes, not a security boundary: the agent runs on the same machine as
+  the token and could push around the hook. Add branch protection where your plan allows it.
 - Anyone who can add the label to an issue can start a droplet, which costs money and uses
   your Claude subscription. Limit who has triage access.
 - The tokens live in the droplet's user data and in the Terraform state in your Spaces
   bucket. Anyone with root on the droplet or read access to the bucket can read them.
+- The agent itself can read the tokens. It runs as the unprivileged `blacksmith` user, but
+  that user's environment, the `0640` env file it reads and `/proc` all expose them. The
+  runner keeps the GitHub token out of the Claude session's environment, which prevents
+  accidents, not a determined agent. Treat everything in the issue and its comments as
+  instructions the agent may follow.
+- Your preview containers run your code and its dependencies. The droplet's metadata service
+  (`169.254.169.254/metadata/v1/user-data`) serves the user data with the tokens; bootstrap
+  blocks containers from reaching it with an `iptables` rule in the `DOCKER-USER` chain, but
+  anything that gets a shell on the host can still read it.
 - Changing any token (rotating a secret) changes the droplet's user data, so the next
   spin-up for an issue that already has a droplet replaces that droplet.
 

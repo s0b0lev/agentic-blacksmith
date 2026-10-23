@@ -77,6 +77,12 @@ def test_docs_exist_and_link():
     assert CHECKLIST.exists()
 
 
+def test_adopting_embeds_the_adopter_workflow_byte_identically():
+    workflow = (REPO / "examples/sample-shop/.github/workflows/blacksmith.yml").read_text()
+    blocks = re.findall(r"```yaml\n(.*?)```", ADOPTING.read_text(), re.S)
+    assert workflow in blocks
+
+
 def test_docs_use_only_real_cli_commands():
     real = set(COMMANDS) | set(EARLY_COMMANDS)
     pattern = re.compile(r"(?:python3 -m blacksmith|run\.sh)\s+([a-z][a-z-]*)")

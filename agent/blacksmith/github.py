@@ -178,7 +178,8 @@ class GitHub:
             *(
                 _comment_from_review(r)
                 for r in self._api_list(f"repos/{self.repo}/pulls/{pr}/reviews")
-                if (r.get("body") or "").strip()
+                # a pending (unsubmitted) review has no submitted_at and is not feedback yet
+                if (r.get("body") or "").strip() and r.get("submitted_at")
             ),
         ]
         cutoff = _normalise(since) if since else None

@@ -168,6 +168,18 @@ def test_human_comments_merges_three_sources_sorted(fake_runner):
     assert out[0].created_at == "2026-01-01T00:00:00Z"
 
 
+def test_human_comments_skip_pending_reviews(fake_runner):
+    fake_runner.responses["gh api --paginate --slurp repos/o/r/pulls/9/reviews"] = ok(
+        [[
+            {"id": 3, "user": {"login": "r"}, "body": "draft", "state": "PENDING"},
+            {"id": 4, "user": {"login": "r"}, "body": "draft", "submitted_at": None},
+            {"id": 5, "user": {"login": "r"}, "body": "rv", "submitted_at": "2026-01-01T00:00:00Z"},
+        ]]
+    )
+    out = make(fake_runner).human_comments_since(9, None)
+    assert [c.id for c in out] == [5]
+
+
 def test_reply_review_comment_and_issue_comment(fake_runner):
     gh = make(fake_runner)
     gh.reply(Comment(5, "u", "first\nsecond", "t", "review_comment"), 9, "ok")

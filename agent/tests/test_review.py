@@ -191,9 +191,10 @@ def test_lock_busy_skips(tmp_path):
 
 def test_comments_markdown_format():
     assert render_comments([REVIEW, ISSUE_COMMENT]) == (
-        "### bob (review_comment, storefront/app/page.tsx:42) at 2026-10-23T11:00:00Z\n\n"
+        "### bob (review_comment, storefront/app/page.tsx:42) at 2026-10-23T11:00:00Z,"
+        " comment_id 11\n\n"
         "Rename the button\n\n"
-        "### carol (issue) at 2026-10-23T11:05:00Z\n\n"
+        "### carol (issue) at 2026-10-23T11:05:00Z, comment_id 12\n\n"
         "Also fix the footer\n\n"
     )
 

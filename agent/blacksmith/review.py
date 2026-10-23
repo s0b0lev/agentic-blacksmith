@@ -38,7 +38,8 @@ def render_comments(comments: Sequence[Comment]) -> str:
     parts = []
     for c in comments:
         where = f", {c.path}:{c.line}" if c.path else ""
-        parts.append(f"### {c.author} ({c.kind}{where}) at {c.created_at}\n\n{c.body}\n\n")
+        parts.append(f"### {c.author} ({c.kind}{where}) at {c.created_at}, comment_id {c.id}"
+                     f"\n\n{c.body}\n\n")
     return "".join(parts)
 
 

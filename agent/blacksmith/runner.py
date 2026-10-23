@@ -1,3 +1,5 @@
+import os
+import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,16 +39,23 @@ def subprocess_runner(
     env: dict[str, str] | None = None,
     input: str | None = None,
 ) -> CommandResult:
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=cwd,
-            timeout=timeout,
-            env=env,
-            input=input,
-            text=True,
-            capture_output=True,
-        )
-    except subprocess.TimeoutExpired as exc:
-        return CommandResult(124, _text(exc.stdout), _text(exc.stderr))
-    return CommandResult(proc.returncode, proc.stdout, proc.stderr)
+    with subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    ) as proc:
+        try:
+            stdout, stderr = proc.communicate(input=input, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            stdout, stderr = proc.communicate()
+            return CommandResult(124, _text(stdout), _text(stderr))
+    return CommandResult(proc.returncode, stdout, stderr)

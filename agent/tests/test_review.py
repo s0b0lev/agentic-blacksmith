@@ -1,3 +1,4 @@
+import dataclasses
 import fcntl
 import json
 
@@ -278,3 +279,14 @@ def test_no_round_before_first_pass_finishes(tmp_path):
     state.stage = "salvaged"
     save_state(e.ctx.work_dir / "state.json", state)
     assert go(e) is True
+
+
+def test_round_claude_env_has_no_github_tokens(tmp_path):
+    from test_stages import TOKENS
+
+    e = prepare(tmp_path)
+    e.ctx = dataclasses.replace(e.ctx, env=TOKENS)
+    assert go(e) is True
+    env = e.claude.calls[0]["env"]
+    assert "GH_TOKEN" not in env and "BLACKSMITH_GITHUB_TOKEN" not in env
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat"

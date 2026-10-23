@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from blacksmith import git, preview
-from blacksmith.claude import StageResult, run_claude
+from blacksmith.claude import StageResult, agent_env, run_claude
 from blacksmith.config import Config
 from blacksmith.github import GitHub, Issue
 from blacksmith.runner import CommandRunner
@@ -57,6 +57,7 @@ class PipelineEnv:
     state_path: Path
     milestones: list[str] = field(default_factory=list)
     transcripts: int = 0
+    last_session: tuple[str, StageResult] | None = None  # within the current stage
 
 
 def utc_now_iso() -> str:
@@ -124,8 +125,9 @@ def _claude(cfg: Config, ctx: RunContext, run: CommandRunner, env: PipelineEnv, 
         timeout_s=int(cfg.limits.first_run_minutes * 60 * BUDGET[budget or name]),
         transcript=transcript,
         run=run,
-        env=dict(ctx.env),
+        env=agent_env(ctx.env),
     )
+    env.last_session = (name, res)
     _log(ctx, env, f"claude {name}: ok={res.ok} timed_out={res.timed_out} "
                    f"turns={res.num_turns} {res.cost_note}".rstrip())
     return res
@@ -360,6 +362,17 @@ def salvage(cfg, ctx, gh, run, state, env, reason: str) -> None:
             pass
 
 
+def _failure_reason(reason: str, env: PipelineEnv) -> str:
+    """Append what the stage's last agent session said when it did not finish cleanly."""
+    if env.last_session is None or env.last_session[1].ok:
+        return reason
+    name, res = env.last_session
+    why = "timed out" if res.timed_out else "error"
+    said = " ".join(res.result_text.split())[:300]
+    return f"{reason} (agent session `{name}` {why}: {said})" if said else \
+        f"{reason} (agent session `{name}` {why})"
+
+
 def write_issue_markdown(gh: GitHub, issue_number: int, work_dir: Path,
                          issue: Issue | None = None) -> Path:
     """Write ``work_dir/issue.md`` (fetching the issue unless given) and return its path."""
@@ -393,9 +406,10 @@ def run_first_pass(
             state.stage = name
             _log(ctx, env, f"stage {name}")
             _post_progress(gh, ctx, state, env)
+            env.last_session = None
             stage(cfg, ctx, gh, run, state, env)
     except StageFailed as exc:
-        salvage(cfg, ctx, gh, run, state, env, str(exc))
+        salvage(cfg, ctx, gh, run, state, env, _failure_reason(str(exc), env))
     except Exception as exc:
         _log(ctx, env, "unexpected error:\n" + traceback.format_exc())
         salvage(cfg, ctx, gh, run, state, env, repr(exc))

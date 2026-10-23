@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable, Sequence
 
 from blacksmith import preview
-from blacksmith.claude import StageResult, run_claude
+from blacksmith.claude import StageResult, agent_env, run_claude
 from blacksmith.config import Config, Limits
 from blacksmith.github import Comment, GitHub
 from blacksmith.runner import CommandRunner
@@ -99,7 +99,7 @@ def _round(cfg: Config, ctx: RunContext, gh: GitHub, run: CommandRunner, state: 
         timeout_s=cfg.limits.review_round_minutes * 60,
         transcript=ctx.work_dir / "transcripts" / f"round-{n}-review.json",
         run=run,
-        env=dict(ctx.env),
+        env=agent_env(ctx.env),
     )
     _log(ctx, now_iso, f"claude review round {n}: ok={res.ok} timed_out={res.timed_out} "
                        f"turns={res.num_turns} {res.cost_note}".rstrip())

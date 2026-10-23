@@ -61,14 +61,44 @@ def _github(conf: dict[str, str]):
     return GitHub(conf["REPO"], subprocess_runner, load_secret_values(os.environ))
 
 
+def _startup_failed(conf: Mapping[str, str], ctx, exc: BaseException, gh=None) -> int:
+    """Report a run that never reached its first stage: stderr, log.md, issue comment."""
+    from datetime import datetime, timezone
+
+    message = f"Blacksmith could not start: {exc!r}"
+    print(message, file=sys.stderr)
+    if ctx is not None:
+        try:
+            ctx.work_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            with open(ctx.work_dir / "log.md", "a", encoding="utf-8") as fh:
+                fh.write(f"{stamp} {message}\n")
+        except OSError:
+            pass
+    try:
+        (gh or _github(conf)).upsert_comment(int(conf["ISSUE"]), "progress", message)
+    except Exception as post_exc:
+        print(f"could not post the start-up failure: {post_exc!r}", file=sys.stderr)
+    return 2
+
+
 def _cmd_run(conf: dict[str, str], ctx) -> int:
+    from blacksmith.config import ConfigError, load_config
     from blacksmith.runner import subprocess_runner
     from blacksmith.stages import run_first_pass
 
-    cfg = _load_config(conf, ctx)
-    if cfg is None:
-        return 2
-    state = run_first_pass(cfg, ctx, _github(conf), subprocess_runner)
+    try:
+        cfg = load_config(ctx.repo_root / conf["CONFIG_PATH"])
+        gh = _github(conf)
+    except Exception as exc:
+        if isinstance(exc, ConfigError):
+            print(f"blacksmith.yml is invalid:\n{exc}", file=sys.stderr)
+        return _startup_failed(conf, ctx, exc)
+    try:
+        # Stage failures are salvaged inside; what escapes is start-up (issue fetch, state).
+        state = run_first_pass(cfg, ctx, gh, subprocess_runner)
+    except Exception as exc:
+        return _startup_failed(conf, ctx, exc, gh)
     print(f"finished: stage={state.stage} pr={state.pr_url}")
     return 0  # salvage is a normal outcome; systemd must not restart the run
 
@@ -229,7 +259,13 @@ def main(argv: list[str] | None = None) -> int:
         conf = {} if early else read_config_file(args.config_file)
         return EARLY_COMMANDS[args.command][0](conf, args)
     conf = read_config_file(args.config_file)
-    return COMMANDS[args.command][0](conf, context_from(conf, os.environ))
+    try:
+        ctx = context_from(conf, os.environ)
+    except Exception as exc:
+        if args.command != "run":
+            raise
+        return _startup_failed(conf, None, exc)
+    return COMMANDS[args.command][0](conf, ctx)
 
 
 if __name__ == "__main__":

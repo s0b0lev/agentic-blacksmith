@@ -94,13 +94,74 @@ def test_status_prints_state(tmp_path, capsys):
     assert '"stage": "verify"' in capsys.readouterr().out
 
 
-def test_run_config_error_exits_2(tmp_path, capsys):
-    from blacksmith.__main__ import main
+class StartupGitHub:
+    def __init__(self, fail_issue=False):
+        self.fail_issue = fail_issue
+        self.upserts = []
 
+    def issue(self, n):
+        if self.fail_issue:
+            raise RuntimeError("gh: 401 Bad credentials")
+        raise AssertionError("not reached")
+
+    def upsert_comment(self, target, kind, body):
+        self.upserts.append((target, kind, body))
+        return 1
+
+
+def test_run_config_error_exits_2(tmp_path, capsys, monkeypatch):
+    import blacksmith.__main__ as cli
+
+    gh = StartupGitHub()
+    monkeypatch.setattr(cli, "_github", lambda conf: gh)
     path, repo = _conf(tmp_path)
     (repo / "blacksmith.yml").write_text("version: 2\n")
-    assert main(["--config-file", str(path), "run"]) == 2
+    assert cli.main(["--config-file", str(path), "run"]) == 2
     assert "version: must be 1" in capsys.readouterr().err
+    (target, kind, body), = gh.upserts
+    assert (target, kind) == (7, "progress")
+    assert body.startswith("Blacksmith could not start: ConfigError(")
+
+
+def test_run_startup_failure_posts_and_logs(tmp_path, capsys, monkeypatch):
+    import blacksmith.__main__ as cli
+
+    gh = StartupGitHub(fail_issue=True)
+    monkeypatch.setattr(cli, "_github", lambda conf: gh)
+    path, repo = _conf(tmp_path)
+    (repo / "blacksmith.yml").write_text(EXAMPLE_YML.read_text())
+    assert cli.main(["--config-file", str(path), "run"]) == 2
+    message = "Blacksmith could not start: RuntimeError('gh: 401 Bad credentials')"
+    assert gh.upserts == [(7, "progress", message)]
+    assert message in capsys.readouterr().err
+    assert message in (repo / ".blacksmith/log.md").read_text()
+
+
+def test_run_missing_runner_config_key_reported(tmp_path, capsys, monkeypatch):
+    import blacksmith.__main__ as cli
+
+    gh = StartupGitHub()
+    monkeypatch.setattr(cli, "_github", lambda conf: gh)
+    path, _ = _conf(tmp_path)
+    path.write_text("\n".join(line for line in path.read_text().splitlines()
+                              if not line.startswith("PREVIEW_HOST=")) + "\n")
+    assert cli.main(["--config-file", str(path), "run"]) == 2
+    assert gh.upserts == [(7, "progress", "Blacksmith could not start: KeyError('PREVIEW_HOST')")]
+
+
+def test_run_startup_post_failure_still_exits_2(tmp_path, capsys, monkeypatch):
+    import blacksmith.__main__ as cli
+
+    def no_github(conf):
+        raise RuntimeError("no gh")
+
+    monkeypatch.setattr(cli, "_github", no_github)
+    path, repo = _conf(tmp_path)
+    (repo / "blacksmith.yml").write_text(EXAMPLE_YML.read_text())
+    assert cli.main(["--config-file", str(path), "run"]) == 2
+    err = capsys.readouterr().err
+    assert "Blacksmith could not start: RuntimeError('no gh')" in err
+    assert "could not post the start-up failure" in err
 
 
 EXAMPLE_YML = AGENT_DIR.parent / "examples/sample-shop/blacksmith.yml"

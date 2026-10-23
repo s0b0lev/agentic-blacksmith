@@ -419,3 +419,43 @@ def test_write_issue_markdown_creates_work_dir(tmp_path):
     path = write_issue_markdown(FakeGitHub([]), 7, work)
     assert path == work / "issue.md"
     assert path.read_text() == "# Scale widget\n"
+
+
+TOKENS = {"GH_TOKEN": "ghs_runner", "BLACKSMITH_GITHUB_TOKEN": "ghp_runner",
+          "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat", "HOME": "/home/blacksmith"}
+
+
+def test_claude_env_has_no_github_tokens(tmp_path):
+    e = make_env(tmp_path, env=TOKENS)
+    go(e)
+    assert e.claude.calls
+    for call in e.claude.calls:
+        assert "GH_TOKEN" not in call["env"] and "BLACKSMITH_GITHUB_TOKEN" not in call["env"]
+        assert call["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat"
+
+
+class FailingClaude(FakeClaude):
+    def __call__(self, prompt, **kwargs):
+        super().__call__(prompt, **kwargs)
+        return StageResult(False, False, "Invalid API key · Please run /login " + "x" * 400,
+                           1, kwargs["transcript"], "")
+
+
+def test_failed_session_text_in_salvage_reason(tmp_path):
+    e = make_env(tmp_path)
+    e.claude = FailingClaude(e.ctx.work_dir, e.events)
+    e.claude.actions["plan"] = None
+    go(e)
+    body = e.gh.prs[0]["body"]
+    assert "Reason: plan.md not written (agent session `plan` error: Invalid API key" in body
+    reason = next(line for line in body.splitlines() if line.startswith("Reason: "))
+    assert "x" * 300 not in reason and "x" * 200 in reason
+
+
+def test_ok_session_reason_unchanged(tmp_path):
+    e = make_env(tmp_path)
+    e.claude.actions["plan"] = None
+    go(e)
+    reason = next(line for line in e.gh.prs[0]["body"].splitlines()
+                  if line.startswith("Reason: "))
+    assert reason == "Reason: plan.md not written"

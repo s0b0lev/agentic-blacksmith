@@ -101,3 +101,66 @@ def test_run_config_error_exits_2(tmp_path, capsys):
     (repo / "blacksmith.yml").write_text("version: 2\n")
     assert main(["--config-file", str(path), "run"]) == 2
     assert "version: must be 1" in capsys.readouterr().err
+
+
+EXAMPLE_YML = AGENT_DIR.parent / "examples/sample-shop/blacksmith.yml"
+
+
+def test_help_lists_review_subcommands():
+    proc = subprocess.run([sys.executable, "-m", "blacksmith", "--help"], cwd=AGENT_DIR,
+                          text=True, capture_output=True)
+    for name in ("poll", "review-round", "self-destruct"):
+        assert name in proc.stdout
+
+
+def test_poll_and_review_round_print_round(tmp_path, capsys, monkeypatch):
+    import blacksmith.review
+    from blacksmith.__main__ import main
+
+    path, repo = _conf(tmp_path)
+    (repo / "blacksmith.yml").write_text(EXAMPLE_YML.read_text())
+    calls = []
+    monkeypatch.setattr(blacksmith.review, "review_round",
+                        lambda cfg, ctx, gh, run: calls.append(ctx.issue) or True)
+    assert main(["--config-file", str(path), "poll"]) == 0
+    assert capsys.readouterr().out == "round: yes\n"
+    assert main(["--config-file", str(path), "review-round"]) == 0
+    assert capsys.readouterr().out == "round: yes\n"
+    assert calls == [7, 7]
+
+
+def test_poll_exits_0_on_error(tmp_path, capsys, monkeypatch):
+    import blacksmith.review
+    from blacksmith.__main__ import main
+
+    path, repo = _conf(tmp_path)
+    (repo / "blacksmith.yml").write_text(EXAMPLE_YML.read_text())
+
+    def boom(*a):
+        raise RuntimeError("gh down")
+
+    monkeypatch.setattr(blacksmith.review, "review_round", boom)
+    assert main(["--config-file", str(path), "poll"]) == 0
+    out = capsys.readouterr()
+    assert out.out == "round: no\n" and "RuntimeError('gh down')" in out.err
+
+
+def test_self_destruct_exit_codes(tmp_path, capsys, monkeypatch):
+    import blacksmith.review
+    from blacksmith.__main__ import main
+
+    path, repo = _conf(tmp_path)
+    (repo / "blacksmith.yml").write_text("version: 2\n")  # invalid config still self-destructs
+    seen = []
+    monkeypatch.setattr(blacksmith.review, "self_destruct",
+                        lambda cfg, ctx, gh: seen.append((cfg, ctx.issue)))
+    assert main(["--config-file", str(path), "self-destruct"]) == 0
+    assert seen == [(None, 7)]
+
+    def boom(*a):
+        raise RuntimeError("dispatch 403")
+
+    monkeypatch.setattr(blacksmith.review, "self_destruct", boom)
+    capsys.readouterr()
+    assert main(["--config-file", str(path), "self-destruct"]) == 1
+    assert "dispatch 403" in capsys.readouterr().err

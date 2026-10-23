@@ -52,17 +52,22 @@ def _load_config(conf: dict[str, str], ctx):
         return None
 
 
-def _cmd_run(conf: dict[str, str], ctx) -> int:
+def _github(conf: dict[str, str]):
     from blacksmith.github import GitHub
     from blacksmith.runner import subprocess_runner
     from blacksmith.scrub import load_secret_values
+
+    return GitHub(conf["REPO"], subprocess_runner, load_secret_values(os.environ))
+
+
+def _cmd_run(conf: dict[str, str], ctx) -> int:
+    from blacksmith.runner import subprocess_runner
     from blacksmith.stages import run_first_pass
 
     cfg = _load_config(conf, ctx)
     if cfg is None:
         return 2
-    gh = GitHub(conf["REPO"], subprocess_runner, load_secret_values(os.environ))
-    state = run_first_pass(cfg, ctx, gh, subprocess_runner)
+    state = run_first_pass(cfg, ctx, _github(conf), subprocess_runner)
     print(f"finished: stage={state.stage} pr={state.pr_url}")
     return 0  # salvage is a normal outcome; systemd must not restart the run
 
@@ -89,10 +94,41 @@ def _cmd_status(conf: dict[str, str], ctx) -> int:
     return 0
 
 
+def _cmd_poll(conf: dict[str, str], ctx) -> int:
+    from blacksmith.review import review_round
+    from blacksmith.runner import subprocess_runner
+
+    ran = False
+    cfg = _load_config(conf, ctx)
+    if cfg is not None:
+        try:
+            ran = review_round(cfg, ctx, _github(conf), subprocess_runner)
+        except Exception as exc:  # the timer polls again in a minute
+            print(f"poll failed: {exc!r}", file=sys.stderr)
+    print(f"round: {'yes' if ran else 'no'}")
+    return 0
+
+
+def _cmd_self_destruct(conf: dict[str, str], ctx) -> int:
+    from blacksmith.review import self_destruct
+
+    cfg = _load_config(conf, ctx)  # None still self-destructs, with default limits
+    try:
+        self_destruct(cfg, ctx, _github(conf))
+    except Exception as exc:
+        print(f"self-destruct dispatch failed: {exc!r}", file=sys.stderr)
+        return 1
+    print("self-destruct requested")
+    return 0
+
+
 COMMANDS = {
     "run": (_cmd_run, "run the first pass: plan, build, preview, verify, design, pr"),
     "preview": (_cmd_preview, "deploy the preview stack only and print preview.json"),
     "status": (_cmd_status, "print the runner state"),
+    "poll": (_cmd_poll, "run a review round if the PR has new human comments"),
+    "review-round": (_cmd_poll, "alias of poll"),
+    "self-destruct": (_cmd_self_destruct, "post the expiry notice and request droplet teardown"),
 }
 
 

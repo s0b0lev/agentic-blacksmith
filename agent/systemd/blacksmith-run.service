@@ -1,0 +1,16 @@
+[Unit]
+Description=Blacksmith first pass for the issue
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=blacksmith
+Group=blacksmith
+WorkingDirectory=/home/blacksmith/repo
+EnvironmentFile=/etc/blacksmith/env
+EnvironmentFile=/etc/blacksmith/config
+Environment=PYTHONPATH=/opt/blacksmith/agent HOME=/home/blacksmith
+ExecStart=/opt/blacksmith/agent/systemd/run.sh run
+Restart=no
+TimeoutStartSec=infinity

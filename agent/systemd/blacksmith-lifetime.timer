@@ -1,0 +1,11 @@
+[Unit]
+Description=Self-destruct the blacksmith droplet when its lifetime ends
+
+[Timer]
+# bootstrap rewrites the hours from LIFETIME_HOURS when installing this unit
+OnBootSec=168h
+Persistent=false
+Unit=blacksmith-lifetime.service
+
+[Install]
+WantedBy=timers.target

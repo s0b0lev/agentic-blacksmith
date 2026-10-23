@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll the blacksmith PR for review comments every minute
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=60s
+Persistent=false
+Unit=blacksmith-poll.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Push guard installed by bootstrap: the agent may only push its own branch and its
+# screenshot assets branch. git passes "<local ref> <local sha> <remote ref> <remote sha>"
+# lines on stdin.
+
+conf="${BLACKSMITH_CONFIG_FILE:-/etc/blacksmith/config}"
+
+conf_get() {
+  local line value
+  [ -r "$conf" ] || return 0
+  line="$(grep -E "^$1=" "$conf" | tail -n 1 || true)"
+  value="${line#*=}"
+  value="${value%\"}"; value="${value#\"}"
+  value="${value%\'}"; value="${value#\'}"
+  printf '%s' "$value"
+}
+
+branch="${BRANCH:-$(conf_get BRANCH)}"
+issue="${ISSUE:-$(conf_get ISSUE)}"
+if [ -z "$branch" ] || [ -z "$issue" ]; then
+  echo "pre-push: BRANCH and ISSUE are not known (env or $conf); refusing to push" >&2
+  exit 1
+fi
+
+allowed_branch="refs/heads/$branch"
+allowed_assets="refs/heads/blacksmith-assets/issue-$issue"
+status=0
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  [ -n "${remote_ref:-}" ] || continue
+  if [ "$remote_ref" != "$allowed_branch" ] && [ "$remote_ref" != "$allowed_assets" ]; then
+    echo "pre-push: rejected push to $remote_ref (only $allowed_branch and $allowed_assets are allowed)" >&2
+    status=1
+  fi
+done
+exit "$status"

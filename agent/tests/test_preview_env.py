@@ -1,3 +1,6 @@
+import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -30,8 +33,40 @@ def test_placeholder_replaced():
 
 
 def test_literal_values_quoted():
-    out = render_env("KEY=a$b 'c' #d\n", {}, "h", rand=lambda: "R")
-    assert out.strip() == "KEY='a$b '\\''c'\\'' #d'"
+    out = render_env("KEY=a$b ${X} #d\n", {}, "h", rand=lambda: "R")
+    assert out.strip() == "KEY='a$b ${X} #d'"
+
+
+def test_values_with_single_quote_double_quoted_and_escaped():
+    out = render_env("KEY=it's \"q\" \\ $x\n", {}, "h", rand=lambda: "R")
+    assert out.strip() == 'KEY="it\'s \\"q\\" \\\\ \\$x"'
+
+
+def test_rendered_env_round_trips_through_compose(tmp_path):
+    if shutil.which("docker") is None or subprocess.run(
+        ["docker", "compose", "version"], capture_output=True
+    ).returncode != 0:
+        pytest.skip("docker compose not available")
+    values = {
+        "A": "plain",
+        "B": "a$b ${HOME} #c",
+        "C": "it's \"q\" \\ $x ${HOME}",
+        "D": "'",
+        "E": "x\\y",
+    }
+    (tmp_path / ".env").write_text(render_env("", values, "h"))
+    env = "".join(f"      {k}: ${{{k}}}\n" for k in values)
+    (tmp_path / "compose.yml").write_text(
+        f"services:\n  s:\n    image: busybox\n    environment:\n{env}"
+    )
+    res = subprocess.run(
+        ["docker", "compose", "-f", "compose.yml", "config", "--format", "json"],
+        cwd=tmp_path, capture_output=True, text=True, timeout=60,
+    )
+    assert res.returncode == 0, res.stderr
+    resolved = json.loads(res.stdout)["services"]["s"]["environment"]
+    # `config` re-escapes `$` as `$$` in its output.
+    assert {k: v.replace("$$", "$") for k, v in resolved.items()} == values
 
 
 def test_comments_and_blank_lines_dropped():

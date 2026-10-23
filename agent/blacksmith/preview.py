@@ -36,7 +36,16 @@ def _unquote(value: str) -> str:
 
 
 def _quote(value: str) -> str:
-    return "'" + value.replace("'", "'\\''") + "'"
+    """Quote a dotenv value for compose: literal single quotes unless it holds ``'``.
+
+    Compose's dotenv parser has no escape inside single quotes, so a value with
+    ``'`` is double-quoted with backslash, double quote and dollar each escaped
+    by a backslash (double quotes would otherwise interpolate ``${VAR}``).
+    """
+    if "'" not in value:
+        return f"'{value}'"
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+    return f'"{escaped}"'
 
 
 def _env_values(

@@ -64,7 +64,7 @@ pull requests:
 - GitHub sees the owner as the pull request's author, so the owner cannot formally approve it.
   Comments and inline review comments still work and still start review rounds.
 
-Commits are authored as `blacksmith[bot] <blacksmith@users.noreply.github.com>`, so the git
+Commits are authored as `blacksmith[bot] <blacksmith[bot]@users.noreply.github.com>`, so the git
 history still shows which commits the agent made.
 
 ## 3. DigitalOcean: API token, Spaces bucket and Spaces keys
@@ -115,8 +115,8 @@ private and the Spaces key to yourself.
 
 ## 4. Optional: DNS for preview hostnames
 
-Without this step, previews use `pr-<n>-<ip-with-dashes>.nip.io` (for example
-`pr-12-203-0-113-7.nip.io`). That works with no setup. Use your own subdomain if you want
+Without this step, previews use `pr<n>-<ip-with-dashes>.nip.io` (for example
+`pr12-203-0-113-7.nip.io`). That works with no setup. Use your own subdomain if you want
 stable, readable hostnames such as `pr-12.preview.example.com`.
 
 1. Pick a subdomain you control, for example `preview.example.com`.

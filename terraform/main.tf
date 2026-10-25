@@ -28,7 +28,7 @@ locals {
 
   preview_host = (
     var.preview_zone == ""
-    ? "pr-${var.issue_number}-${replace(digitalocean_droplet.this.ipv4_address, ".", "-")}.nip.io"
+    ? "pr${var.issue_number}-${replace(digitalocean_droplet.this.ipv4_address, ".", "-")}.nip.io"
     : "pr-${var.issue_number}.${var.preview_zone}"
   )
 }

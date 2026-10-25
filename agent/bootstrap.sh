@@ -226,7 +226,8 @@ else
   ip="$(curl -fsS --retry 5 http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address)" \
     || die "cannot read the public IP from the droplet metadata service"
   [ -n "$ip" ] || die "droplet metadata returned an empty public IP"
-  PREVIEW_HOST="pr-$ISSUE-${ip//./-}.nip.io"
+  # no dash between pr and the issue number: nip.io would otherwise read the issue as the first octet
+  PREVIEW_HOST="pr$ISSUE-${ip//./-}.nip.io"
 fi
 log "preview host: $PREVIEW_HOST"
 set_conf PREVIEW_HOST "$PREVIEW_HOST"
@@ -240,7 +241,7 @@ step 5 "git clone, branch and push guard"
 as_bs '
 git config --global credential.helper "$1"
 git config --global user.name "blacksmith[bot]"
-git config --global user.email "blacksmith@users.noreply.github.com"
+git config --global user.email "blacksmith[bot]@users.noreply.github.com"
 ' "$CREDENTIAL_HELPER"
 if [ ! -d "$REPO_ROOT/.git" ]; then
   BLACKSMITH_GITHUB_TOKEN="$GITHUB_TOKEN" \

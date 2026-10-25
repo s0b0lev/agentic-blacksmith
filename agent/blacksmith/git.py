@@ -8,7 +8,7 @@ from pathlib import Path
 from blacksmith.runner import CommandResult, CommandRunner
 
 BOT_IDENTITY = ["-c", "user.name=blacksmith[bot]",
-                "-c", "user.email=blacksmith@users.noreply.github.com"]  # fmt: skip
+                "-c", "user.email=blacksmith[bot]@users.noreply.github.com"]  # fmt: skip
 
 
 class GitError(RuntimeError):

@@ -26,7 +26,7 @@ def test_host_with_zone():
 
 @pytest.mark.parametrize("zone", [None, ""])
 def test_host_without_zone(zone):
-    assert preview_host(123, "1.2.3.4", zone) == "pr-123-1-2-3-4.nip.io"
+    assert preview_host(123, "1.2.3.4", zone) == "pr123-1-2-3-4.nip.io"
 
 
 def test_placeholder_replaced():
@@ -116,3 +116,11 @@ def test_real_env_example_renders():
         assert rendered[key].strip("'") not in PLACEHOLDERS
     if "POSTGRES_PASSWORD" in rendered:
         assert rendered["POSTGRES_PASSWORD"].strip("'") != "change-me"
+
+
+def test_host_without_zone_has_no_numeric_group_before_ip():
+    # nip.io resolves the first four numeric dash/dot groups it finds, so the issue number
+    # must not be its own group: pr-1-165-227-167-195.nip.io would resolve to 1.165.227.167.
+    host = preview_host(1, "165.227.167.195", None)
+    assert host == "pr1-165-227-167-195.nip.io"
+    assert "-1-165-" not in host

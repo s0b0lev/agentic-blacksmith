@@ -23,10 +23,15 @@ PLACEHOLDERS = {"", "change-me", "changeme", "CHANGE_ME"}
 
 
 def preview_host(issue: int, ip: str, zone: str | None) -> str:
-    """Hostname serving the preview: ``pr-N.<zone>`` or an nip.io fallback."""
+    """Hostname serving the preview: ``pr-N.<zone>`` or an nip.io fallback.
+
+    nip.io resolves the first four numeric dash/dot groups it finds, so the issue number is
+    glued to the ``pr`` prefix (``pr12-203-0-113-7.nip.io``); ``pr-12-203-0-113-7`` would
+    resolve to 12.203.0.113.
+    """
     if zone:
         return f"pr-{issue}.{zone}"
-    return f"pr-{issue}-{ip.replace('.', '-')}.nip.io"
+    return f"pr{issue}-{ip.replace('.', '-')}.nip.io"
 
 
 def _unquote(value: str) -> str:

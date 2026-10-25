@@ -31,7 +31,7 @@ def test_commit_all_commits_as_bot_when_dirty(fake_runner):
     assert fake_runner.calls[1:] == [
         ["git", "add", "-A"],
         ["git", "-c", "user.name=blacksmith[bot]",
-         "-c", "user.email=blacksmith@users.noreply.github.com",
+         "-c", "user.email=blacksmith[bot]@users.noreply.github.com",
          "commit", "-q", "-m", "build: issue 7"],
     ]
 
@@ -80,3 +80,10 @@ def test_push_assets_rejects_non_github_remote(tmp_path, fake_runner):
     fake_runner.responses["git remote"] = CommandResult(0, "https://gitlab.com/a/b.git\n", "")
     with pytest.raises(git.GitError, match="gitlab"):
         git.push_assets(REPO, tmp_path, ASSETS, fake_runner)
+
+
+def test_bot_identity_email_cannot_match_a_github_account():
+    # GitHub attributes <login>@users.noreply.github.com to the account with that login, and
+    # a user named "blacksmith" exists; a bracketed local part can never be a login.
+    email = next(a for a in git.BOT_IDENTITY if a.startswith("user.email=")).split("=", 1)[1]
+    assert email == "blacksmith[bot]@users.noreply.github.com"

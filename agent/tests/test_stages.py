@@ -385,7 +385,7 @@ def test_pr_screenshot_links_rewritten(tmp_path):
     e = make_env(tmp_path)
     e.run.responses["git remote get-url"] = CommandResult(
         0, "https://github.com/acme/shop.git\n", "")
-    e.run.responses["git -c user.name=blacksmith[bot] -c user.email=blacksmith@users.noreply"
+    e.run.responses["git -c user.name=blacksmith[bot] -c user.email=blacksmith[bot]@users.noreply"
                     ".github.com commit-tree"] = CommandResult(0, "abc123\n", "")
 
     def pr(work_dir):

@@ -104,12 +104,41 @@ def test_bootstrap_renders_lifetime_from_config():
 def test_bootstrap_has_numbered_steps_in_order():
     text = BOOTSTRAP.read_text()
     positions = []
-    for n in range(1, 10):
+    for n in range(1, 11):
         m = re.search(rf'^step {n} "[^"]+"$', text, re.M)
         assert m, f"step {n} missing"
         positions.append(m.start())
     assert positions == sorted(positions)
-    assert "step 10 " not in text
+    assert "step 11 " not in text
+
+
+def test_observability_step_is_third_and_before_clone():
+    text = BOOTSTRAP.read_text()
+    assert re.search(r'^step 3 "observability"$', text, re.M)
+    assert text.index('step 3 "observability"') < text.index('step 6 "git clone')
+    body = text[text.index('step 3 "observability"'):text.index('step 4 "')]
+    assert "OBSERVABILITY_ENABLED" in body and "GRAFANA_CLOUD_TOKEN" in body
+    assert "observability disabled" in body
+
+
+def test_observability_step_never_dies():
+    text = BOOTSTRAP.read_text()
+    func = text[text.index("setup_observability() {"):text.index('step 1 "')]
+    assert "die " not in func and "exit " not in func
+    body = text[text.index('step 3 "observability"'):text.index('step 4 "')]
+    assert "if ! setup_observability" in body
+    assert 'log "WARNING' in body
+
+
+def test_observability_renders_config_and_runs_alloy_as_root():
+    text = BOOTSTRAP.read_text()
+    func = text[text.index("setup_observability() {"):text.index('step 1 "')]
+    assert "python3 -P -m blacksmith alloy-config" in func
+    assert "/etc/alloy/config.alloy" in func and "chmod 0600 /etc/alloy/config.alloy" in func
+    assert "/etc/default/alloy" in func and "GC_TOKEN=" in func
+    assert "alloy.service.d/override.conf" in func and "User=root" in func
+    assert "systemctl enable --now alloy" in func
+    assert "apt.grafana.com" in func
 
 
 def test_lifetime_timer_enabled_before_any_apt_call():

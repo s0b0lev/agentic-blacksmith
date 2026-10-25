@@ -114,6 +114,66 @@ done
 [[ "$LIFETIME_HOURS" =~ ^[0-9]+$ ]] || die "LIFETIME_HOURS must be a number, got '$LIFETIME_HOURS'"
 log "bootstrap for $REPO#$ISSUE (base $BASE_BRANCH, config $CONFIG_PATH)"
 
+# Ship this droplet's logs and metrics to Grafana Cloud with Grafana Alloy (the config comes
+# from `python3 -m blacksmith alloy-config`). Called as `if ! setup_observability`, where
+# errexit is off: every command that matters checks itself, and nothing here dies or exits.
+setup_observability() {
+  local rendered out
+  if ! command -v alloy >/dev/null; then
+    curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/grafana.gpg \
+      || return 1
+    echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
+      > /etc/apt/sources.list.d/grafana.list || return 1
+    apt_get update || return 1
+    apt_get install alloy || return 1
+  fi
+  install -d -m 0755 /etc/alloy || return 1
+  rendered="$(mktemp)" || return 1
+  if ! PYTHONPATH="$AGENT" python3 -P -m blacksmith alloy-config --env "$ENV_FILE" --runner-config "$CONF" \
+      > "$rendered"; then
+    rm -f "$rendered"
+    return 1
+  fi
+  mv "$rendered" /etc/alloy/config.alloy || { rm -f "$rendered"; return 1; }
+  chmod 0600 /etc/alloy/config.alloy || return 1
+  # /etc/default/alloy is the unit's EnvironmentFile; keep the package's own lines.
+  touch /etc/default/alloy && chmod 0600 /etc/default/alloy || return 1
+  sed -i '/^GC_/d' /etc/default/alloy || return 1
+  {
+    printf 'GC_LOKI_URL=%s\n' "$(file_get "$CONF" LOKI_URL)"
+    printf 'GC_LOKI_USER=%s\n' "$(file_get "$CONF" LOKI_USER)"
+    printf 'GC_PROM_URL=%s\n' "$(file_get "$CONF" PROMETHEUS_URL)"
+    printf 'GC_PROM_USER=%s\n' "$(file_get "$CONF" PROMETHEUS_USER)"
+    printf 'GC_TOKEN=%s\n' "$(file_get "$ENV_FILE" GRAFANA_CLOUD_TOKEN)"
+  } >> /etc/default/alloy || return 1
+  # root: the journal, the Docker socket and the agent user's home. The droplet is disposable.
+  install -d -m 0755 /etc/systemd/system/alloy.service.d || return 1
+  printf '[Service]\nUser=root\nGroup=root\n' > /etc/systemd/system/alloy.service.d/override.conf \
+    || return 1
+  systemctl daemon-reload || return 1
+  # `alloy validate` exists from Alloy 1.9; older packages print "unknown command".
+  if ! out="$(GC_LOKI_URL=x GC_LOKI_USER=x GC_PROM_URL=x GC_PROM_USER=x GC_TOKEN=x \
+      alloy validate /etc/alloy/config.alloy 2>&1)"; then
+    if grep -q "unknown command" <<< "$out"; then
+      log "observability: this alloy has no validate command; skipping validation"
+    else
+      log "observability: alloy config invalid: $(tail -n 20 <<< "$out")"
+      return 1
+    fi
+  fi
+  systemctl enable --now alloy || return 1
+  systemctl restart alloy || return 1
+  for _ in $(seq 1 20); do
+    if curl -fsS --max-time 2 http://127.0.0.1:12345/-/ready >/dev/null 2>&1; then
+      log "observability: alloy ready"
+      return 0
+    fi
+    sleep 1
+  done
+  log "observability: alloy not ready after 20 s"
+  return 1
+}
+
 step 1 "user, secrets and lifetime cap"
 id blacksmith >/dev/null 2>&1 || useradd -m -s /bin/bash blacksmith
 chown root:blacksmith "$ENV_FILE"
@@ -201,7 +261,18 @@ grep -qxF "$line" "$HOME/.profile" || printf "%s\n" "$line" >> "$HOME/.profile"
 '
 as_bs 'echo "uv $(uv --version), node $(node --version), npm $(npm --version)"'
 
-step 3 "claude code"
+step 3 "observability"
+OBS_ENABLED="$(file_get "$CONF" OBSERVABILITY_ENABLED)"
+GRAFANA_CLOUD_TOKEN="$(file_get "$ENV_FILE" GRAFANA_CLOUD_TOKEN)"
+if [ "$OBS_ENABLED" = true ] && [ -n "$GRAFANA_CLOUD_TOKEN" ]; then
+  if ! setup_observability; then
+    log "WARNING: observability setup failed; continuing without it"
+  fi
+else
+  log "observability disabled (OBSERVABILITY_ENABLED=${OBS_ENABLED:-unset}, GRAFANA_CLOUD_TOKEN $([ -n "$GRAFANA_CLOUD_TOKEN" ] && echo set || echo unset))"
+fi
+
+step 4 "claude code"
 as_bs 'command -v claude >/dev/null || curl -fsSL https://claude.ai/install.sh | bash'
 as_bs 'claude --version'
 # Fail here, with a comment on the issue, rather than hours later in the first stage.
@@ -219,7 +290,7 @@ if ! as_bs 'claude plugin marketplace add anthropics/claude-plugins-official || 
   log "WARNING: could not install the superpowers plugin; continuing without it"
 fi
 
-step 4 "preview host"
+step 5 "preview host"
 if [ -n "$PREVIEW_ZONE" ]; then
   PREVIEW_HOST="pr-$ISSUE.$PREVIEW_ZONE"
 else
@@ -237,7 +308,7 @@ command -v iptables >/dev/null || apt_get install iptables
 iptables -C DOCKER-USER -d 169.254.169.254 -j DROP 2>/dev/null \
   || iptables -I DOCKER-USER -d 169.254.169.254 -j DROP
 
-step 5 "git clone, branch and push guard"
+step 6 "git clone, branch and push guard"
 as_bs '
 git config --global credential.helper "$1"
 git config --global user.name "blacksmith[bot]"
@@ -270,7 +341,7 @@ else
 fi
 ' "$REPO_ROOT" "$BRANCH" "$BASE_BRANCH"
 
-step 6 "skills and mcp"
+step 7 "skills and mcp"
 install -d -o blacksmith -g blacksmith "$HOME_DIR/.claude" "$HOME_DIR/.claude/skills"
 for skill in "$AGENT"/skills/*/; do
   name="$(basename "$skill")"
@@ -300,7 +371,7 @@ else
   log "MCP servers not enabled (needs FIGMA_API_KEY, design.figma: true and .mcp.json)"
 fi
 
-step 7 "setup commands"
+step 8 "setup commands"
 SETUP="$(bs_config setup)" || die "cannot read setup from $CONFIG_PATH"
 while IFS= read -r cmd; do
   [ -n "$cmd" ] || continue
@@ -316,13 +387,13 @@ if hooks_path="$(as_bs 'git -C "$1" config --local core.hooksPath' "$REPO_ROOT")
   as_bs 'git -C "$1" config --local --unset core.hooksPath' "$REPO_ROOT"
 fi
 
-step 8 "fetch issue"
+step 9 "fetch issue"
 BLACKSMITH_GITHUB_TOKEN="$GITHUB_TOKEN" as_bs '
 cd "$1"
 GH_TOKEN="$BLACKSMITH_GITHUB_TOKEN" PYTHONPATH="$2" python3 -P -m blacksmith fetch-issue
 ' "$REPO_ROOT" "$AGENT"
 
-step 9 "runner config and systemd units"
+step 10 "runner config and systemd units"
 set_conf REPO_ROOT "$REPO_ROOT"
 set_conf PROMPTS_DIR "$PROMPTS_DIR"
 set_conf BRANCH "$BRANCH"

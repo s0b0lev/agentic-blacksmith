@@ -61,6 +61,10 @@ on:
         required: false
       TELEGRAM_BOT_TOKEN:
         required: false
+      GRAFANA_CLOUD_TOKEN:
+        required: false
+      GRAFANA_API_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -132,7 +136,18 @@ jobs:
           }
           if ! size="$(get droplet.size)" || ! region="$(get droplet.region)" \
              || ! image="$(get droplet.image)" || ! lifetime="$(get limits.lifetime_hours)" \
-             || ! label="$(get label)" || ! allowed="$(get allowed_labelers)"; then
+             || ! label="$(get label)" || ! allowed="$(get allowed_labelers)" \
+             || ! obs_enabled="$(get observability.enabled)" \
+             || ! loki_url="$(get observability.loki_url)" \
+             || ! loki_user="$(get observability.loki_user)" \
+             || ! prom_url="$(get observability.prometheus_url)" \
+             || ! prom_user="$(get observability.prometheus_user)" \
+             || ! grafana_url="$(get observability.grafana_url)" \
+             || ! obs_public="$(get observability.public)" \
+             || ! agent_stream="$(get observability.agent_stream)" \
+             || ! loki_ds_uid="$(get observability.loki_datasource_uid)" \
+             || ! prom_ds_uid="$(get observability.prometheus_datasource_uid)" \
+             || ! prefix="$(get branch_prefix)"; then
             echo "::error::$CONFIG_PATH in $REPO is missing or invalid (see the log above)"
             exit 1
           fi
@@ -143,6 +158,17 @@ jobs:
             echo "LIFETIME_HOURS=$lifetime"
             echo "LABEL=$label"
             echo "ALLOWED_LABELERS=${allowed//$'\n'/ }"
+            echo "OBS_ENABLED=$obs_enabled"
+            echo "LOKI_URL=$loki_url"
+            echo "LOKI_USER=$loki_user"
+            echo "PROM_URL=$prom_url"
+            echo "PROM_USER=$prom_user"
+            echo "GRAFANA_URL=$grafana_url"
+            echo "OBS_PUBLIC=$obs_public"
+            echo "AGENT_STREAM=$agent_stream"
+            echo "LOKI_DS_UID=$loki_ds_uid"
+            echo "PROM_DS_UID=$prom_ds_uid"
+            echo "BRANCH=${prefix}${ISSUE}"
           } >> "$GITHUB_ENV"
 
       - name: Confirm issue is open and labeled
@@ -208,6 +234,47 @@ jobs:
           fi
           echo "BASE_BRANCH=$base" >> "$GITHUB_ENV"
 
+      - name: Grafana dashboard
+        # Best effort: a missing token or a Grafana error leaves DASHBOARD_URL empty and the
+        # run continues without a dashboard link.
+        id: dashboard
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+          GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
+        run: |
+          DASHBOARD_URL=""
+          if [ "$OBS_ENABLED" != true ]; then
+            echo "::notice::observability is disabled in $CONFIG_PATH; no Grafana dashboard"
+          elif [ -z "$GRAFANA_URL" ]; then
+            echo "::notice::observability.grafana_url is empty in $CONFIG_PATH; no Grafana dashboard"
+          elif [ -z "$GRAFANA_API_TOKEN" ]; then
+            echo "::notice::GRAFANA_API_TOKEN is not set; no Grafana dashboard"
+          else
+            public="$OBS_PUBLIC"
+            if [ "$public" = auto ]; then
+              if private="$(gh api "repos/$REPO" --jq .private)"; then
+                if [ "$private" = false ]; then public=true; else public=false; fi
+              else
+                echo "::warning::cannot read the visibility of $REPO; keeping the dashboard private"
+                public=false
+              fi
+            fi
+            metrics=false
+            if [ -n "$PROM_URL" ]; then metrics=true; fi
+            rc=0
+            url="$(PYTHONPATH=template/agent python3 -m blacksmith dashboard create \
+              --grafana-url "$GRAFANA_URL" --repo "$REPO" --issue "$ISSUE" --branch "$BRANCH" \
+              --public "$public" --loki-uid "$LOKI_DS_UID" --prom-uid "$PROM_DS_UID" \
+              --agent-stream "$AGENT_STREAM" --metrics "$metrics")" || rc=$?
+            if [ "$rc" -eq 0 ] && [ -n "$url" ]; then
+              DASHBOARD_URL="$url"
+            else
+              echo "::warning::Grafana dashboard not created: dashboard create exited $rc (see the log above)"
+            fi
+          fi
+          echo "DASHBOARD_URL=$DASHBOARD_URL" >> "$GITHUB_ENV"
+
       - name: Set up Terraform
         if: steps.check.outputs.skip != 'true'
         uses: hashicorp/setup-terraform@v3
@@ -269,6 +336,15 @@ jobs:
           TF_VAR_telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TF_VAR_telegram_chat_id: ${{ inputs.telegram_chat_id }}
           TF_VAR_lifetime_hours: ${{ env.LIFETIME_HOURS }}
+          TF_VAR_grafana_cloud_token: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
+          TF_VAR_observability_enabled: ${{ env.OBS_ENABLED }}
+          TF_VAR_loki_url: ${{ env.LOKI_URL }}
+          TF_VAR_loki_user: ${{ env.LOKI_USER }}
+          TF_VAR_prometheus_url: ${{ env.PROM_URL }}
+          TF_VAR_prometheus_user: ${{ env.PROM_USER }}
+          TF_VAR_agent_stream: ${{ env.AGENT_STREAM }}
+          TF_VAR_branch: ${{ env.BRANCH }}
+          TF_VAR_dashboard_url: ${{ env.DASHBOARD_URL }}
         run: terraform apply -auto-approve -input=false
 
       - name: Read Terraform outputs
@@ -290,10 +366,15 @@ jobs:
           GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
           PREVIEW_URL: ${{ steps.tf.outputs.preview_url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DASHBOARD_URL: ${{ env.DASHBOARD_URL }}
         run: |
           marker='<!-- blacksmith:spin-up -->'
-          body="$(printf 'Blacksmith is working on this. Preview will be at %s. Logs: %s\n\n%s' \
-            "$PREVIEW_URL" "$RUN_URL" "$marker")"
+          dashboard=""
+          if [ -n "$DASHBOARD_URL" ]; then
+            dashboard=" Live dashboard: $DASHBOARD_URL."
+          fi
+          body="$(printf 'Blacksmith is working on this. Preview will be at %s.%s Logs: %s\n\n%s' \
+            "$PREVIEW_URL" "$dashboard" "$RUN_URL" "$marker")"
           ids="$(gh api --paginate "repos/$REPO/issues/$ISSUE/comments" \
             --jq ".[] | select(.body | contains(\"$marker\")) | .id")"
           existing="${ids%%$'\n'*}"
@@ -308,11 +389,15 @@ jobs:
         env:
           IP: ${{ steps.tf.outputs.ip }}
           PREVIEW_URL: ${{ steps.tf.outputs.preview_url }}
+          DASHBOARD_URL: ${{ env.DASHBOARD_URL }}
         run: |
           {
             echo "## Blacksmith: $REPO#$ISSUE"
             echo
             echo "- Preview: $PREVIEW_URL"
+            if [ -n "$DASHBOARD_URL" ]; then
+              echo "- Live dashboard: $DASHBOARD_URL"
+            fi
             echo "- Droplet IP: \`$IP\`"
             echo "- Terraform workspace: \`issue-$ISSUE\`"
             echo

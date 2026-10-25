@@ -61,6 +61,10 @@ on:
         required: false
       TELEGRAM_BOT_TOKEN:
         required: false
+      GRAFANA_CLOUD_TOKEN:
+        required: false
+      GRAFANA_API_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -138,16 +142,32 @@ jobs:
           }
           if size="$(get droplet.size)" && region="$(get droplet.region)" \
              && image="$(get droplet.image)" && lifetime="$(get limits.lifetime_hours)" \
-             && label="$(get label)"; then
+             && label="$(get label)" && obs_enabled="$(get observability.enabled)" \
+             && loki_url="$(get observability.loki_url)" && loki_user="$(get observability.loki_user)" \
+             && prom_url="$(get observability.prometheus_url)" \
+             && prom_user="$(get observability.prometheus_user)" \
+             && agent_stream="$(get observability.agent_stream)" \
+             && grafana_url="$(get observability.grafana_url)"; then
+            # The observability values do not affect destroy; they keep the apply and destroy
+            # variable sets identical.
             {
               echo "TF_VAR_droplet_size=$size"
               echo "TF_VAR_droplet_region=$region"
               echo "TF_VAR_droplet_image=$image"
               echo "TF_VAR_lifetime_hours=$lifetime"
               echo "TF_VAR_label=$label"
+              echo "TF_VAR_observability_enabled=$obs_enabled"
+              echo "TF_VAR_loki_url=$loki_url"
+              echo "TF_VAR_loki_user=$loki_user"
+              echo "TF_VAR_prometheus_url=$prom_url"
+              echo "TF_VAR_prometheus_user=$prom_user"
+              echo "TF_VAR_agent_stream=$agent_stream"
+              echo "TF_VAR_branch="
+              echo "TF_VAR_dashboard_url="
+              echo "GRAFANA_URL=$grafana_url"
             } >> "$GITHUB_ENV"
           else
-            echo "::warning::cannot read $CONFIG_PATH in $REPO; destroying with Terraform defaults for droplet settings and label"
+            echo "::warning::cannot read $CONFIG_PATH in $REPO; destroying with Terraform defaults for droplet settings, label and observability, and keeping any Grafana dashboard"
           fi
           base="$BASE_BRANCH_INPUT"
           if [ -z "$base" ]; then
@@ -221,8 +241,12 @@ jobs:
           TF_VAR_figma_api_key: ${{ secrets.FIGMA_API_KEY }}
           TF_VAR_telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TF_VAR_telegram_chat_id: ${{ inputs.telegram_chat_id }}
+          TF_VAR_grafana_cloud_token: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
           # TF_VAR_base_branch, TF_VAR_label, TF_VAR_droplet_size, TF_VAR_droplet_region,
-          # TF_VAR_droplet_image and TF_VAR_lifetime_hours come from "Read config" via $GITHUB_ENV.
+          # TF_VAR_droplet_image, TF_VAR_lifetime_hours, TF_VAR_observability_enabled,
+          # TF_VAR_loki_url, TF_VAR_loki_user, TF_VAR_prometheus_url, TF_VAR_prometheus_user,
+          # TF_VAR_agent_stream, TF_VAR_branch and TF_VAR_dashboard_url come from "Read config"
+          # via $GITHUB_ENV.
         run: terraform destroy -auto-approve -input=false
 
       - name: Delete issue workspace
@@ -238,6 +262,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
         run: gh api -X DELETE "repos/$REPO/git/refs/heads/blacksmith-assets/issue-$ISSUE" || true
+
+      - name: Delete Grafana dashboard
+        if: steps.ws.outputs.skip != 'true'
+        env:
+          GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
+        run: |
+          if [ -n "$GRAFANA_URL" ] && [ -n "$GRAFANA_API_TOKEN" ]; then
+            PYTHONPATH=template/agent python3 -m blacksmith dashboard delete \
+              --grafana-url "$GRAFANA_URL" --repo "$REPO" --issue "$ISSUE" \
+              || echo "::warning::could not delete the Grafana dashboard"
+          fi
 
       - name: Post tear-down comment
         if: steps.ws.outputs.skip != 'true'

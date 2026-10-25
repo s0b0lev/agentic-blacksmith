@@ -207,3 +207,55 @@ def test_adopter_example_wires_telegram_into_both_calls():
     for name in ("spin-up", "tear-down"):
         assert jobs[name]["secrets"]["TELEGRAM_BOT_TOKEN"] == "${{ secrets.TELEGRAM_BOT_TOKEN }}"
         assert jobs[name]["with"]["telegram_chat_id"] == "${{ vars.BLACKSMITH_TELEGRAM_CHAT_ID }}"
+
+
+@pytest.mark.parametrize("path", [SPIN_UP, TEAR_DOWN], ids=lambda p: p.name)
+def test_grafana_secrets_are_optional(path):
+    secrets = _on(_load(path))["workflow_call"]["secrets"]
+    for name in ("GRAFANA_CLOUD_TOKEN", "GRAFANA_API_TOKEN"):
+        assert name in secrets and not secrets[name].get("required", False), name
+
+
+def test_spin_up_creates_dashboard_before_terraform_apply():
+    steps = _load(SPIN_UP)["jobs"]["spin-up"]["steps"]
+    names = [s.get("name") for s in steps]
+    assert names.index("Grafana dashboard") < names.index("Terraform apply")
+    assert names.index("Resolve base branch") < names.index("Grafana dashboard")
+    step = steps[names.index("Grafana dashboard")]
+    assert step["env"]["GRAFANA_API_TOKEN"] == "${{ secrets.GRAFANA_API_TOKEN }}"
+    assert "python3 -m blacksmith dashboard create" in step["run"]
+    assert "::warning::" in step["run"]
+    assert "DASHBOARD_URL=" in step["run"]
+    assert 'gh api "repos/$REPO" --jq .private' in step["run"]
+
+
+def test_spin_up_passes_observability_values_and_dashboard_url_to_terraform():
+    text = SPIN_UP.read_text()
+    assert "TF_VAR_grafana_cloud_token: ${{ secrets.GRAFANA_CLOUD_TOKEN }}" in text
+    assert "TF_VAR_dashboard_url: ${{ env.DASHBOARD_URL }}" in text
+    assert "TF_VAR_branch: ${{ env.BRANCH }}" in text
+    assert "TF_VAR_observability_enabled: ${{ env.OBS_ENABLED }}" in text
+
+
+def test_spin_up_comment_and_summary_mention_the_dashboard():
+    steps = _load(SPIN_UP)["jobs"]["spin-up"]["steps"]
+    by_name = {s.get("name"): s for s in steps}
+    assert "Live dashboard" in by_name["Post issue comment"]["run"]
+    assert "Live dashboard" in by_name["Summary"]["run"]
+
+
+def test_tear_down_deletes_the_dashboard_best_effort():
+    steps = _load(TEAR_DOWN)["jobs"]["tear-down"]["steps"]
+    names = [s.get("name") for s in steps]
+    assert names.index("Delete Grafana dashboard") > names.index("Terraform destroy")
+    step = steps[names.index("Delete Grafana dashboard")]
+    assert "python3 -m blacksmith dashboard delete" in step["run"]
+    assert "::warning::" in step["run"]
+    assert step["env"]["GRAFANA_API_TOKEN"] == "${{ secrets.GRAFANA_API_TOKEN }}"
+
+
+def test_adopter_example_maps_grafana_secrets_into_both_calls():
+    jobs = _load(ADOPTER)["jobs"]
+    for name in ("spin-up", "tear-down"):
+        for secret in ("GRAFANA_CLOUD_TOKEN", "GRAFANA_API_TOKEN"):
+            assert jobs[name]["secrets"][secret] == f"${{{{ secrets.{secret} }}}}"

@@ -219,9 +219,10 @@ Save this as `.github/workflows/blacksmith.yml` in your repository. It is the sa
 ```yaml
 # Copy to .github/workflows/blacksmith.yml in the target repository.
 # Needs secrets DIGITALOCEAN_TOKEN, SPACES_ACCESS_KEY_ID, SPACES_SECRET_ACCESS_KEY,
-# CLAUDE_CODE_OAUTH_TOKEN, BLACKSMITH_GITHUB_TOKEN (optionally FIGMA_API_KEY and
-# TELEGRAM_BOT_TOKEN), and variables BLACKSMITH_STATE_BUCKET, BLACKSMITH_PREVIEW_ZONE (may be
-# empty for nip.io) and BLACKSMITH_TELEGRAM_CHAT_ID (may be empty to skip Telegram).
+# CLAUDE_CODE_OAUTH_TOKEN, BLACKSMITH_GITHUB_TOKEN (optionally FIGMA_API_KEY,
+# TELEGRAM_BOT_TOKEN, and GRAFANA_CLOUD_TOKEN and GRAFANA_API_TOKEN for observability),
+# and variables BLACKSMITH_STATE_BUCKET, BLACKSMITH_PREVIEW_ZONE (may be empty for nip.io)
+# and BLACKSMITH_TELEGRAM_CHAT_ID (may be empty to skip Telegram).
 # The label below must match `label:` in blacksmith.yml. Secrets are mapped explicitly:
 # `secrets: inherit` only works within one organization or enterprise.
 name: blacksmith
@@ -251,6 +252,8 @@ jobs:
       BLACKSMITH_GITHUB_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
       FIGMA_API_KEY: ${{ secrets.FIGMA_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
+      GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
 
   resolve:
     if: >-
@@ -316,6 +319,8 @@ jobs:
       BLACKSMITH_GITHUB_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
       FIGMA_API_KEY: ${{ secrets.FIGMA_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
+      GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
 ```
 
 Until the `v1` tag is published, pin both `uses:` lines to `@master` and set

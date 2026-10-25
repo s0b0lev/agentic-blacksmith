@@ -124,7 +124,7 @@ def _round(cfg: Config, ctx: RunContext, gh: GitHub, run: CommandRunner, state: 
     if pres.ok:
         _log(ctx, now_iso, f"preview up at {pres.url}")
         if _preview_meta(ctx.work_dir) != before:
-            gh.upsert_comment(state.pr_number, "preview", _preview_section(ctx.work_dir))
+            gh.upsert_comment(state.pr_number, "preview", _preview_section(ctx.work_dir, ctx.dashboard_url))
         preview_note = "ok"
     else:
         _log(ctx, now_iso, f"preview failed: {pres.error}")

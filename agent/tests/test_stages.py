@@ -525,3 +525,19 @@ def test_no_notifier_means_no_messages(tmp_path):
     state = go(e)
     assert state.stage == "done"
     assert "telegram" not in (e.ctx.work_dir / "log.md").read_text()
+
+
+def test_dashboard_link_in_progress_comment_and_pr_body(tmp_path):
+    e = make_env(tmp_path)
+    e.ctx = dataclasses.replace(e.ctx, dashboard_url="https://g.example/public-dashboards/tok")
+    go(e)
+    progress = [b for (_, kind, b) in e.gh.upserts if kind == "progress"]
+    assert progress and all("Live dashboard: https://g.example/public-dashboards/tok" in b for b in progress)
+    assert "**Live dashboard:** https://g.example/public-dashboards/tok" in e.gh.prs[0]["body"]
+
+
+def test_no_dashboard_line_without_url(tmp_path):
+    e = make_env(tmp_path)
+    go(e)
+    assert all("Live dashboard" not in b for (_, _, b) in e.gh.upserts)
+    assert "Live dashboard" not in e.gh.prs[0]["body"]

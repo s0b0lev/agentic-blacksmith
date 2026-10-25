@@ -40,6 +40,7 @@ def context_from(conf: Mapping[str, str], environ: Mapping[str, str]):
         prompts_dir=Path(conf["PROMPTS_DIR"]),
         env=dict(environ),
         repo=conf.get("REPO", ""),
+        dashboard_url=conf.get("DASHBOARD_URL", ""),
     )
 
 

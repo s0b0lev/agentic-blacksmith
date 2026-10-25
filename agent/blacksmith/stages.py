@@ -45,6 +45,7 @@ class RunContext:
     env: Mapping[str, str]
     now: Callable[[], float] = time.monotonic
     repo: str = ""  # owner/name, for notification links
+    dashboard_url: str = ""  # public Grafana dashboard for this issue, if any
 
 
 @dataclass
@@ -100,7 +101,10 @@ def _log(ctx: RunContext, env: PipelineEnv, msg: str) -> None:
 
 def _post_progress(gh: GitHub, ctx: RunContext, state: State, env: PipelineEnv) -> None:
     """Best effort: a failed progress comment is logged, never fatal."""
-    parts = [HEADER.format(branch=ctx.branch), *env.milestones, f"_Stage: `{state.stage}`_"]
+    header = HEADER.format(branch=ctx.branch)
+    if ctx.dashboard_url:
+        header += f"\nLive dashboard: {ctx.dashboard_url}"
+    parts = [header, *env.milestones, f"_Stage: `{state.stage}`_"]
     try:
         state.progress_comment_id = gh.upsert_comment(ctx.issue, "progress", "\n\n".join(parts))
     except Exception as exc:
@@ -279,14 +283,16 @@ def stage_design(cfg, ctx, gh, run, state, env) -> None:
         design.write_text("Design check did not write a report.\n")
 
 
-def _preview_section(work_dir: Path) -> str:
+def _preview_section(work_dir: Path, dashboard_url: str = "") -> str:
     meta = _preview_meta(work_dir)
-    if not meta:
-        return ""
-    lines = [f"**Preview:** {meta['url']}"]
-    if meta.get("auth"):
-        user, password = meta["auth"]
-        lines.append(f"**Preview login:** `{user}` / `{password}`")
+    lines = []
+    if meta:
+        lines.append(f"**Preview:** {meta['url']}")
+        if meta.get("auth"):
+            user, password = meta["auth"]
+            lines.append(f"**Preview login:** `{user}` / `{password}`")
+    if dashboard_url:
+        lines.append(f"**Live dashboard:** {dashboard_url}")
     return "\n".join(lines)
 
 
@@ -317,7 +323,7 @@ def stage_pr(cfg, ctx, gh, run, state, env) -> None:
         raise StageFailed("pr.md has no title line")
     body = "\n\n".join([
         body.strip(),
-        "---\n" + _preview_section(ctx.work_dir),
+        "---\n" + _preview_section(ctx.work_dir, ctx.dashboard_url),
         _details("Verification", ctx.work_dir / "verify.md"),
         _details("Design check", ctx.work_dir / "design.md"),
     ])
@@ -362,7 +368,7 @@ def salvage(cfg, ctx, gh, run, state, env, reason: str) -> None:
         log_lines = (ctx.work_dir / "log.md").read_text().splitlines()[-LOG_TAIL_LINES:]
         body = (f"Blacksmith stopped at stage `{stage}`.\n\nReason: {reason}\n\n"
                 "<details><summary>Log</summary>\n\n" + "\n".join(log_lines) + "\n</details>")
-        section = _preview_section(ctx.work_dir)
+        section = _preview_section(ctx.work_dir, ctx.dashboard_url)
         if section:
             body += "\n\n" + section
         state.stage = "salvaged"

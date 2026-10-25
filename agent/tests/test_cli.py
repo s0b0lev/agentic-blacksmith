@@ -75,6 +75,15 @@ def test_context_from_config_file(tmp_path):
     assert ctx.prompts_dir == tmp_path / "prompts"
     assert ctx.env == {"HOME": "/h"}
     assert ctx.repo == "o/r"
+    assert ctx.dashboard_url == ""
+
+
+def test_context_from_config_file_dashboard_url(tmp_path):
+    from blacksmith.__main__ import context_from, read_config_file
+
+    path, _ = _conf(tmp_path, DASHBOARD_URL="https://g.example/d/x")
+    ctx = context_from(read_config_file(path), {})
+    assert ctx.dashboard_url == "https://g.example/d/x"
 
 
 def test_status_without_state(tmp_path, capsys):

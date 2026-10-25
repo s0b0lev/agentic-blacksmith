@@ -20,6 +20,7 @@ label "blacksmith" on an issue
   -> reusable spin-up workflow (this repo)
   -> terraform apply: one droplet, firewall, SSH key, optional DNS record
   -> droplet bootstrap: Docker, Node, uv, Claude Code, clone, your setup commands
+  -> Grafana dashboard per issue (optional): logs and metrics from boot
   -> stages: plan -> build -> preview -> verify -> design -> pr
   -> pull request with preview URL, login and screenshots
   -> review rounds: new PR comments -> agent replies and pushes -> preview redeploys
@@ -49,7 +50,8 @@ Until then, adopters pin `@master` as described in the adoption guide.
 
 - `.github/workflows/` — the reusable `spin-up.yml` and `tear-down.yml` workflows adopters call.
 - `agent/` — what runs on the droplet: the Python runner (`blacksmith/`), prompts, skills,
-  `bootstrap.sh`, systemd units, the pre-push guard, and tests.
+  `bootstrap.sh`, systemd units, the pre-push guard, and tests. `observability.py` renders
+  the Alloy config and `dashboard.py` creates and deletes the per-issue Grafana dashboard.
 - `terraform/` — one droplet per issue, with its firewall, SSH key and optional DNS record.
 - `examples/` — a sample adopter's workflow and `blacksmith.yml` (`sample-shop`).
 - `docs/` — adoption guide, operations guide, end-to-end checklist, and scripts to create the

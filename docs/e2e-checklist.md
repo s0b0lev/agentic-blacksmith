@@ -24,7 +24,9 @@ example, `first_run_minutes: 120` and `review_round_minutes: 45`; adjust them if
       the copyright line to '© <your project name>'".
 - [ ] Add the `blacksmith` label.
 - [ ] Within ~2 minutes: the issue has a "Blacksmith is working on this. Preview will be at
-      ..." comment with the preview URL and a link to the workflow run.
+      ..." comment with the preview URL and a link to the workflow run. With observability
+      enabled it also reads "Live dashboard: ...", and the Grafana link opens without a login
+      (public repository) showing "Runner events" within ~10 minutes.
 - [ ] Within ~10 minutes: the issue's progress comment ("**Blacksmith** is working on this
       issue on branch `blacksmith/issue-<n>`") shows a `### Plan` section.
 - [ ] Within ~15–20 minutes: the preview URL answers with a basic-auth prompt, and the
@@ -40,7 +42,8 @@ example, `first_run_minutes: 120` and `review_round_minutes: 45`; adjust them if
       the requested change.
 - [ ] Close the pull request without merging.
 - [ ] Within ~5 minutes: the pull request has a "Preview server destroyed." comment, and the
-      DigitalOcean console shows no droplet for this issue.
+      DigitalOcean console shows no droplet for this issue. With observability enabled, the
+      Live dashboard link now returns 404.
 - [ ] The branch `blacksmith-assets/issue-<n>` no longer exists in `<owner>/<repo>`.
 - [ ] Delete the `blacksmith/issue-<n>` branch and close the throwaway issue.
 

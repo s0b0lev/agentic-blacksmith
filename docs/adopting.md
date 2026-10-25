@@ -198,6 +198,8 @@ On the **Secrets** tab, add:
 | `CLAUDE_CODE_OAUTH_TOKEN` | Output of `claude setup-token` from step 5 |
 | `FIGMA_API_KEY` | Optional; Figma personal access token from step 6 |
 | `TELEGRAM_BOT_TOKEN` | Optional; Telegram bot token from step 9 |
+| `GRAFANA_CLOUD_TOKEN` | Optional; Grafana Cloud access-policy token from step 10 |
+| `GRAFANA_API_TOKEN` | Optional; Grafana service-account token from step 10 |
 
 On the **Variables** tab, add:
 
@@ -386,10 +388,10 @@ publishes ports 80 and 443 and routes to your services.
 - `build`: a map of service name to build context directory. These services are built from
   the work branch instead of using their `image:`.
 - `images`: a map of service name to image. Replaces that service's `image:` without touching
-  your repository (see section 10).
+  your repository (see section 12).
 - `reset`: a map of service name to a list of service keys (such as `command`, `healthcheck`,
   `volumes`) to clear from your compose file, using compose's `!reset` tag. Use it when a
-  replacement image needs different settings (see section 10).
+  replacement image needs different settings (see section 12).
 - `overrides`: a map of service name to a compose service fragment (any keys a compose service
   accepts). The fragments are written verbatim to a third compose file applied after the
   generated override, so they win. `${VAR}` references are resolved by compose from `.env`.
@@ -442,7 +444,52 @@ Messages are plain text. The preview login is included, so use a private group. 
 lives on the droplet next to the other secrets; the coding agent's own sessions do not see
 it, and a failed message is logged in `.blacksmith/log.md` and never fails a stage.
 
-## 10. Warnings
+## 10. Optional: Grafana Cloud observability
+
+With this turned on, every issue gets its own Grafana dashboard, linked from the first issue
+comment, the progress comment and the pull request. It shows CPU, memory and disk of the
+droplet, the runner's events, the coding agent's live session (every assistant message, tool
+call and tool result), the containers of the preview, and the systemd and bootstrap logs. Logs
+and metrics are shipped by Grafana Alloy from the first minute of bootstrap, so you can watch
+a run that is stuck. The free tier of Grafana Cloud is enough.
+
+1. Create a free stack at grafana.com.
+2. Copy the push URLs and numeric user ids for logs and metrics: in your stack open
+   Connections → Add new connection → "Hosted logs" (Loki) and "Hosted Prometheus metrics".
+   Each page shows a URL and a user (a number). Omit the Prometheus pair to ship logs only.
+3. Create an access-policy token: grafana.com → My Account → Security → Access Policies →
+   Create access policy with the scopes `logs:write` and `metrics:write`, then Add token.
+   Store it as the secret `GRAFANA_CLOUD_TOKEN`. It travels to the droplet, where Alloy uses
+   it to push.
+4. Create a service account: in your stack open Administration → Users and access → Service
+   accounts → Add service account with the role Editor, then Add service account token. Store
+   it as the secret `GRAFANA_API_TOKEN`. Only the workflows use it, to create and delete the
+   dashboard; it never reaches the droplet.
+5. Read the data source uids: open Connections → Data sources, open the Loki and the
+   Prometheus data source, and copy the uid from the page URL
+   (`/connections/datasources/edit/<uid>`). The defaults are `grafanacloud-logs` and
+   `grafanacloud-prom`; set `loki_datasource_uid` and `prometheus_datasource_uid` only if
+   yours differ.
+6. Add the `observability:` section to `blacksmith.yml` (copy it from
+   [examples/sample-shop/blacksmith.yml](../examples/sample-shop/blacksmith.yml)) and set
+   `enabled: true`. `grafana_url` is your stack URL; the dashboard and its links exist only
+   when it is set.
+7. Make sure the two secrets from steps 3 and 4 are set (step 7 lists them). The workflow
+   from step 8 already passes both through.
+
+**Who can see the dashboard.** The agent stream contains repository file contents, command
+output and the preview login that the verify stage is given. A public dashboard is therefore
+as public as your repository. `public: auto` (the default) shares the dashboard publicly only
+when the GitHub repository is public; `true` and `false` force it. Set `agent_stream: false`
+to leave the agent stream out entirely; the runner events, containers and metrics remain.
+Every secret value from the droplet's environment is replaced with `<redacted>` before it
+leaves the droplet.
+
+The dashboard is deleted at tear-down. Logs stay in Loki for your stack's retention (14 days
+on the free tier) and can be read in Explore after logging in. Observability never stops a
+run: if Alloy cannot be set up, bootstrap logs a warning and continues.
+
+## 11. Warnings
 
 - The preview is public on the internet. Only basic auth protects it, and the username and
   password are in the pull request body and the issue's progress comment, so anyone who can
@@ -474,7 +521,7 @@ it, and a failed message is logged in `.blacksmith/log.md` and never fails a sta
 - Changing any token (rotating a secret) changes the droplet's user data, so the next
   spin-up for an issue that already has a droplet replaces that droplet.
 
-## 11. Images your compose file can no longer pull
+## 12. Images your compose file can no longer pull
 
 Production compose files sometimes reference images that are no longer pullable, for example
 a `latest` tag that was removed. The preview would fail on `docker compose up`. Four keys work

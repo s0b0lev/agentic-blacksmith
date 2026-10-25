@@ -7,7 +7,7 @@ Examples below use issue `12` in repository `acme/shop`. Replace both with your 
 
 ## Where to look
 
-Look in this order. Most questions are answered by the first three.
+Look in this order. Most questions are answered by the first four.
 
 1. **The issue's progress comment.** One comment that starts with "**Blacksmith** is working
    on this issue on branch `blacksmith/issue-12`." It is edited in place as stages finish:
@@ -15,14 +15,22 @@ Look in this order. Most questions are answered by the first three.
    stage ...". The last line shows the current stage. A separate, earlier comment from the
    workflow ("Blacksmith is working on this. Preview will be at ...") links to the workflow
    run.
-2. **The pull request.** The body has the summary, the preview URL and login, the
+2. **The live dashboard** (when `observability` is enabled, [adopting.md](adopting.md),
+   step 10). The first issue comment, the progress comment and the pull request body each
+   carry a "Live dashboard" link. It is titled `blacksmith <repo> #<issue>` and has CPU,
+   memory and disk stats; "Runner events, last 10 min", "Runner events", "Agent stream" and
+   "Containers" panels; and a collapsed "Systemd and bootstrap" row. "Runner events, last
+   10 min" at zero for a long time while the stage is not `done` means the run is stuck. The
+   dashboard is deleted at tear-down; the logs stay in Loki for the stack's retention
+   (14 days on the free tier) and can be read in Explore with a login.
+3. **The pull request.** The body has the summary, the preview URL and login, the
    verification results and the design check. Each review round adds or updates a comment
    that starts with `Round <n>:`. If the first pass failed, the pull request is a draft titled
    `[blacksmith] <issue title> (incomplete)` with the reason and the last 200 log lines.
-3. **The workflow run's summary.** Actions → the `blacksmith` run → Summary. The spin-up job
+4. **The workflow run's summary.** Actions → the `blacksmith` run → Summary. The spin-up job
    prints the preview URL, the droplet IP, the Terraform workspace (`issue-12`) and an SSH
    hint. A failed step's log tells you which secret, variable or config value is wrong.
-4. **On the droplet** (see "SSH into the droplet" below):
+5. **On the droplet** (see "SSH into the droplet" below):
 
    | What | Where |
    |---|---|
@@ -35,6 +43,7 @@ Look in this order. Most questions are answered by the first three.
    | Agent transcripts, one file per session | `~blacksmith/repo/.blacksmith/transcripts/` |
    | Stage outputs | `~blacksmith/repo/.blacksmith/plan.md`, `verify.md`, `design.md`, `pr.md` |
    | Preview inputs | `~blacksmith/repo/.blacksmith/Caddyfile`, `compose.override.yml`, `preview.json` |
+   | Log shipper (observability) | `journalctl -u alloy`, `/etc/alloy/config.alloy` |
 
    Useful commands once you are root on the droplet:
 
@@ -58,6 +67,29 @@ If the repository sets `TELEGRAM_BOT_TOKEN` and `BLACKSMITH_TELEGRAM_CHAT_ID`
 one message per stage change, with the preview login and the PR link, so you rarely need to
 open the issue to know where a run is. A failed Telegram message is logged in
 `.blacksmith/log.md` as `telegram failed: ...` and never stops the run.
+
+## Alloy on the droplet
+
+When `observability` is enabled, bootstrap step 3 ("observability") installs Grafana Alloy,
+renders its config, writes the Grafana Cloud credentials and starts the `alloy` unit. Alloy
+ships `.blacksmith/log.md`, the agent's session files, the bootstrap log, the journal and the
+container logs to Loki, plus node and container metrics to Prometheus. Secret values are
+redacted before they leave the droplet.
+
+```sh
+systemctl status alloy
+journalctl -u alloy -f
+cat /etc/alloy/config.alloy
+```
+
+- `/etc/alloy/config.alloy` is the rendered config. Re-render it from the repository with
+  `python3 -m blacksmith alloy-config`, then `systemctl restart alloy`.
+- `/etc/default/alloy` holds the credentials (readable by root only).
+- If no data arrives in Grafana, `journalctl -u alloy` shows the push errors (wrong URL, user
+  or token scope are the usual causes).
+- Observability failures never stop a run. If setup fails, `/var/log/blacksmith-bootstrap.log`
+  contains `WARNING: observability setup failed; continuing without it` and the run proceeds
+  without logs in Grafana.
 
 ## SSH into the droplet
 

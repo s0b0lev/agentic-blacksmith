@@ -23,6 +23,8 @@ SECRETS = (
     "CLAUDE_CODE_OAUTH_TOKEN",
     "DIGITALOCEAN_TOKEN",
     "FIGMA_API_KEY",
+    "GRAFANA_API_TOKEN",
+    "GRAFANA_CLOUD_TOKEN",
     "SPACES_ACCESS_KEY_ID",
     "SPACES_SECRET_ACCESS_KEY",
     "TELEGRAM_BOT_TOKEN",
@@ -70,13 +72,20 @@ def test_docs_exist_and_link():
     assert "docs/operations.md" in readme
     adopting = ADOPTING.read_text()
     for needle in ("fine-grained", "ns1.digitalocean.com", "setup-token", "preview.images",
-                   *SECRETS, *VARIABLES):
+                   "observability:", "grafanacloud-logs", "logs:write", *SECRETS, *VARIABLES):
         assert needle in adopting, needle
     operations = OPERATIONS.read_text()
     for needle in ("blacksmith-bootstrap.log", "journalctl -u blacksmith-run",
-                   "blacksmith-self-destruct", "Telegram"):
+                   "blacksmith-self-destruct", "Telegram", "journalctl -u alloy",
+                   "/etc/alloy/config.alloy", "Live dashboard"):
         assert needle in operations, needle
     assert CHECKLIST.exists()
+
+
+def test_checklist_covers_the_dashboard():
+    text = CHECKLIST.read_text()
+    assert "Live dashboard" in text
+    assert "public-dashboards" in text or "Grafana" in text
 
 
 def test_adopting_embeds_the_adopter_workflow_byte_identically():

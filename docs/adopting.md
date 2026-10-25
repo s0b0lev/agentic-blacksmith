@@ -24,8 +24,8 @@ It does not fit if:
 - Setup needs secrets or private networks that you cannot give to a throwaway server.
 
 You also need: a GitHub repository you own (see step 2), a DigitalOcean account, and a Claude
-Pro or Max subscription. The template repository (`s0b0lev/agentic-blacksmith`) must be
-public: your workflow calls its reusable workflows, and the droplet clones it.
+Pro or Max subscription. The template repository (`s0b0lev/agentic-blacksmith`) is public;
+your workflow calls its reusable workflows, and the droplet clones it.
 
 ## 2. Create the GitHub token
 
@@ -72,11 +72,33 @@ history still shows which commits the agent made.
 You need three things from DigitalOcean.
 
 1. **API token** (`DIGITALOCEAN_TOKEN`). In the control panel open API → Tokens → Generate
-   New Token. Give it write access. If you use custom scopes, it must be able to manage
-   droplets, firewalls, SSH keys, tags, and (with step 4) domain records.
-2. **Spaces bucket** for Terraform state. Open Spaces Object Storage → Create Bucket. Pick a
-   region such as `fra1` and a name such as `acme-blacksmith-state`. Keep it private. The
-   bucket name goes into the repository variable `BLACKSMITH_STATE_BUCKET`.
+   New Token. "Full Access" works. If you prefer custom scopes, these are the ones the
+   template uses:
+
+   | Resource | Scopes | Why |
+   |---|---|---|
+   | Droplet | `droplet:create`, `droplet:read`, `droplet:delete` | one droplet per issue; tear-down and the cleanup script delete it |
+   | Firewall | `firewall:create`, `firewall:read`, `firewall:update`, `firewall:delete` | one firewall per droplet |
+   | SSH key | `ssh_key:create`, `ssh_key:read`, `ssh_key:delete` | a generated key per issue |
+   | Tag | `tag:create`, `tag:read` | the `blacksmith`, `repo:<slug>` and `issue:<n>` tags |
+   | Action | `action:read` | Terraform waits for droplet and firewall actions to finish |
+   | Domain | `domain:read`, `domain:create`, `domain:delete` | only with step 4 (`BLACKSMITH_PREVIEW_ZONE`); DNS records are under the domain scope |
+
+   Spaces is not part of this token: the state bucket uses the separate access key pair from
+   item 3. Scope names come from DigitalOcean's custom-scopes UI and were not verified
+   against a live token; if the first run fails on a permission error, use a full-access token
+   for that run and tighten afterwards.
+2. **Spaces bucket** for Terraform state. Either open Spaces Object Storage → Create Bucket,
+   pick a region such as `fra1` and a name such as `acme-blacksmith-state`, and keep it
+   private, or create it from your machine once you have the key pair from the next item:
+
+   ```sh
+   SPACES_ACCESS_KEY_ID=... SPACES_SECRET_ACCESS_KEY=... docs/create-state-bucket.sh acme-blacksmith-state fra1
+   ```
+
+   The script needs the `aws` command or `uv` on your machine, creates the bucket private, and
+   does nothing if it already exists. The bucket name goes into the repository variable
+   `BLACKSMITH_STATE_BUCKET`.
 3. **Spaces access key pair** (`SPACES_ACCESS_KEY_ID` and `SPACES_SECRET_ACCESS_KEY`). Open
    Spaces Object Storage → Access Keys → Create Access Key. Give it read, write and delete
    access to the state bucket. The secret is shown once; copy both values.
@@ -288,6 +310,9 @@ jobs:
       BLACKSMITH_GITHUB_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
       FIGMA_API_KEY: ${{ secrets.FIGMA_API_KEY }}
 ```
+
+Until the `v1` tag is published, pin both `uses:` lines to `@master` and set
+`template_ref: master` under `with:` in both jobs; switch to `@v1` once the tag exists.
 
 Things you may change under `with:` in both the `spin-up` and `tear-down` jobs:
 

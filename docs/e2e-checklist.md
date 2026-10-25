@@ -9,17 +9,13 @@ example, `first_run_minutes: 120` and `review_round_minutes: 45`; adjust them if
 
 ## Before you start
 
-- [ ] `s0b0lev/agentic-blacksmith` is public (Settings → General → Danger Zone → Change
-      visibility), so `<owner>/<repo>` can call its reusable workflows and the droplet can clone
-      it.
-- [ ] The `master` branch is pushed to `s0b0lev/agentic-blacksmith`.
 - [ ] `<owner>/<repo>` has all six secrets and `BLACKSMITH_STATE_BUCKET` set, as in
       [adopting.md](adopting.md) step 7 (`BLACKSMITH_PREVIEW_ZONE` is optional).
 - [ ] `<owner>/<repo>` has `.github/workflows/blacksmith.yml` and a `blacksmith.yml`
       (start from `examples/sample-shop/`) on its default branch, and a `blacksmith` label.
-- [ ] The template ref the workflow pins exists. Before `v1` is tagged, temporarily point
-      the two `uses:` lines at `@master` and add `template_ref: master`
-      under `with:` in both jobs. Revert this after the tag exists.
+- [ ] The template ref the workflow pins exists. The `v1` tag is not published yet, so point
+      the two `uses:` lines at `@master` and add `template_ref: master` under `with:` in both
+      jobs. Switch back to `@v1` after the tag exists.
 - [ ] The DigitalOcean console shows no droplet tagged `blacksmith`.
 
 ## The run

@@ -34,13 +34,16 @@ label "blacksmith" on an issue
    `blacksmith.yml`.
 3. Add the `blacksmith` label to an issue.
 
-This repository must be public: adopters call its reusable workflows, and each droplet
-clones it. The full guide, with every name to type, is [docs/adopting.md](docs/adopting.md). When
+The full guide, with every name to type, is [docs/adopting.md](docs/adopting.md). When
 something goes wrong, read [docs/operations.md](docs/operations.md).
 
 ## Status
 
 v1 — backend and web frontend projects that run with Docker Compose; mobile is out of scope.
+
+The repository is public and the code is complete and reviewed, but the `v1` tag is not
+published yet: it follows the first full run of [docs/e2e-checklist.md](docs/e2e-checklist.md).
+Until then, adopters pin `@master` as described in the adoption guide.
 
 ## Repository layout
 
@@ -49,4 +52,5 @@ v1 — backend and web frontend projects that run with Docker Compose; mobile is
   `bootstrap.sh`, systemd units, the pre-push guard, and tests.
 - `terraform/` — one droplet per issue, with its firewall, SSH key and optional DNS record.
 - `examples/` — a sample adopter's workflow and `blacksmith.yml` (`sample-shop`).
-- `docs/` — adoption guide, operations guide, end-to-end checklist and the droplet cleanup script.
+- `docs/` — adoption guide, operations guide, end-to-end checklist, and scripts to create the
+  state bucket and clean up leftover droplets.

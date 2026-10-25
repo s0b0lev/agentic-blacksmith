@@ -463,9 +463,12 @@ a run that is stuck. The free tier of Grafana Cloud is enough.
    Store it as the secret `GRAFANA_CLOUD_TOKEN`. It travels to the droplet, where Alloy uses
    it to push.
 4. Create a service account: in your stack open Administration → Users and access → Service
-   accounts → Add service account with the role Editor, then Add service account token. Store
-   it as the secret `GRAFANA_API_TOKEN`. Only the workflows use it, to create and delete the
-   dashboard; it never reaches the droplet.
+   accounts → Add service account with the role **Admin**, then Add service account token.
+   Store it as the secret `GRAFANA_API_TOKEN`. Only the workflows use it, to create and delete
+   the dashboard; it never reaches the droplet. Admin is required: on current Grafana Cloud
+   stacks an Editor service account can create a dashboard but cannot read, share or delete it,
+   and gets no admin rights on folders it creates, so the workflow would fail with
+   `Permissions needed: dashboards:read`.
 5. Read the data source uids: open Connections → Data sources, open the Loki and the
    Prometheus data source, and copy the uid from the page URL
    (`/connections/datasources/edit/<uid>`). The defaults are `grafanacloud-logs` and

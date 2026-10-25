@@ -52,6 +52,20 @@ class Design:
 
 
 @dataclass(frozen=True)
+class Observability:
+    enabled: bool = False
+    loki_url: str = ""
+    loki_user: str = ""
+    prometheus_url: str = ""
+    prometheus_user: str = ""
+    grafana_url: str = ""
+    public: str = "auto"  # "auto" | "true" | "false"
+    agent_stream: bool = True
+    loki_datasource_uid: str = "grafanacloud-logs"
+    prometheus_datasource_uid: str = "grafanacloud-prom"
+
+
+@dataclass(frozen=True)
 class Preview:
     compose: str
     project: str
@@ -82,6 +96,7 @@ class Config:
     preview: Preview
     design: Design
     allowed_labelers: tuple[str, ...] = ()
+    observability: Observability = Observability()
 
 
 class _Ctx:
@@ -258,10 +273,35 @@ def _preview(ctx: _Ctx, raw: Any) -> Preview:
     )
 
 
+def _observability(ctx: _Ctx, raw: Any) -> Observability:
+    d = ctx.section(raw, "observability", set(Observability.__dataclass_fields__))
+    enabled = ctx.boolean(d, "enabled", "observability", False)
+    agent_stream = ctx.boolean(d, "agent_stream", "observability", True)
+    public = d.get("public", "auto")
+    if isinstance(public, bool):
+        public = "true" if public else "false"
+    if public not in ("auto", "true", "false"):
+        ctx.err("observability.public", "must be auto, true or false")
+        public = "auto"
+    text = {
+        key: ctx.string(d, key, "observability", getattr(Observability, key)) or ""
+        for key in ("loki_url", "loki_user", "prometheus_url", "prometheus_user", "grafana_url",
+                    "loki_datasource_uid", "prometheus_datasource_uid")
+    }
+    if enabled:
+        for key in ("loki_url", "loki_user"):
+            if not text[key]:
+                ctx.err(f"observability.{key}", "missing")
+    for key in ("loki_url", "prometheus_url", "grafana_url"):
+        if text[key] and not text[key].startswith("https://"):
+            ctx.err(f"observability.{key}", "must start with https://")
+    return Observability(enabled=enabled, public=public, agent_stream=agent_stream, **text)
+
+
 def parse_config(data: dict) -> Config:
     ctx = _Ctx()
     top = {"version", "label", "branch_prefix", "droplet", "limits", "setup",
-           "checks_setup", "checks", "preview", "design", "allowed_labelers"}
+           "checks_setup", "checks", "preview", "design", "allowed_labelers", "observability"}
     if not isinstance(data, dict):
         raise ConfigError("<root>: must be a mapping")
     d = ctx.section(data, "", top)
@@ -295,6 +335,7 @@ def parse_config(data: dict) -> Config:
         preview=_preview(ctx, d.get("preview")),
         design=design,
         allowed_labelers=ctx.strings(d, "allowed_labelers", ""),
+        observability=_observability(ctx, d.get("observability")),
     )
     if ctx.errors:
         raise ConfigError("\n".join(ctx.errors))

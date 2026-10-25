@@ -245,6 +245,16 @@ def test_config_get_scalars_and_booleans():
     assert _config_get("limits.lifetime_hours", "--config", str(EXAMPLE_YML)).stdout == "168\n"
 
 
+def test_config_get_observability_values(tmp_path):
+    cfg = tmp_path / "blacksmith.yml"
+    cfg.write_text(
+        "version: 1\npreview: {compose: c.yml, project: p, routes: [{path: '/*', to: 'web:1'}]}\n"
+        "observability: {enabled: true, loki_url: https://l.example/push, loki_user: '7', public: false}\n"
+    )
+    assert _config_get("observability.enabled", "--config", str(cfg)).stdout == "true\n"
+    assert _config_get("observability.public", "--config", str(cfg)).stdout == "false\n"
+
+
 def test_config_get_empty_list_prints_nothing():
     proc = _config_get("allowed_labelers", "--config", str(EXAMPLE_YML))
     assert proc.returncode == 0, proc.stderr

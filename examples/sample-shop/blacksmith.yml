@@ -69,3 +69,14 @@ preview:
 design:
   figma: true                     # enable the design-check stage when FIGMA_API_KEY is set
   paths: ["storefront/"]          # only changes under these paths trigger it
+observability:
+  enabled: false                  # true ships droplet/agent logs and metrics to Grafana Cloud
+  loki_url: https://logs-prod-000.grafana.net/loki/api/v1/push        # Grafana Cloud > Loki > Details > URL
+  loki_user: "000000"             # Grafana Cloud > Loki > Details > User
+  prometheus_url: https://prometheus-prod-00-prod-eu-west-0.grafana.net/api/prom/push   # Grafana Cloud > Prometheus > Details > URL
+  prometheus_user: "000000"       # Grafana Cloud > Prometheus > Details > User
+  grafana_url: https://your-stack.grafana.net   # your Grafana stack URL, used for links in the PR
+  public: auto                    # auto | true | false: whether the stack's dashboards are publicly viewable
+  agent_stream: true              # stream the agent's own output to Loki as well
+  loki_datasource_uid: grafanacloud-logs      # Grafana > Connections > Data sources > Loki > UID (in the URL)
+  prometheus_datasource_uid: grafanacloud-prom   # Grafana > Connections > Data sources > Prometheus > UID

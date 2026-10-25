@@ -135,3 +135,72 @@ def test_bad_route_target():
     data["preview"]["routes"][0]["to"] = "web"
     with pytest.raises(ConfigError, match=r"preview\.routes\[0\]\.to"):
         parse_config(data)
+
+
+def test_observability_defaults():
+    obs = parse_config(minimal()).observability
+    assert obs.enabled is False
+    assert obs.public == "auto"
+    assert obs.agent_stream is True
+    assert obs.loki_datasource_uid == "grafanacloud-logs"
+    assert obs.prometheus_datasource_uid == "grafanacloud-prom"
+
+
+def test_observability_parsed():
+    data = minimal()
+    data["observability"] = {
+        "enabled": True,
+        "loki_url": "https://logs-prod-012.grafana.net/loki/api/v1/push",
+        "loki_user": "123456",
+        "prometheus_url": "https://prometheus-prod-01.grafana.net/api/prom/push",
+        "prometheus_user": "654321",
+        "grafana_url": "https://acme.grafana.net",
+        "public": False,
+        "agent_stream": False,
+    }
+    obs = parse_config(data).observability
+    assert obs.enabled is True
+    assert obs.loki_user == "123456"
+    assert obs.public == "false"
+    assert obs.agent_stream is False
+
+
+@pytest.mark.parametrize("public", ["auto", True, False, "true", "false"])
+def test_observability_public_accepts_auto_and_booleans(public):
+    data = minimal()
+    data["observability"] = {"public": public}
+    assert parse_config(data).observability.public in {"auto", "true", "false"}
+
+
+def test_observability_enabled_requires_loki():
+    data = minimal()
+    data["observability"] = {"enabled": True}
+    with pytest.raises(ConfigError) as exc:
+        parse_config(data)
+    lines = str(exc.value).splitlines()
+    assert any(line.startswith("observability.loki_url:") for line in lines)
+    assert any(line.startswith("observability.loki_user:") for line in lines)
+
+
+@pytest.mark.parametrize("key", ["loki_url", "prometheus_url", "grafana_url"])
+def test_observability_urls_must_be_https(key):
+    data = minimal()
+    data["observability"] = {key: "http://insecure.example"}
+    with pytest.raises(ConfigError, match=rf"observability\.{key}: must start with https://"):
+        parse_config(data)
+
+
+def test_observability_rejects_bad_public_and_unknown_keys():
+    data = minimal()
+    data["observability"] = {"public": "maybe", "bogus": 1}
+    with pytest.raises(ConfigError) as exc:
+        parse_config(data)
+    text = str(exc.value)
+    assert "observability.public: must be auto, true or false" in text
+    assert "observability.bogus: unknown key" in text
+
+
+def test_sample_example_has_observability_disabled_with_placeholders():
+    obs = load_config(EXAMPLE).observability
+    assert obs.enabled is False
+    assert obs.loki_url.startswith("https://")

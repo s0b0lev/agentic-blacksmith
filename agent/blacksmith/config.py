@@ -81,6 +81,7 @@ class Config:
     checks: tuple[Check, ...]
     preview: Preview
     design: Design
+    allowed_labelers: tuple[str, ...] = ()
 
 
 class _Ctx:
@@ -260,7 +261,7 @@ def _preview(ctx: _Ctx, raw: Any) -> Preview:
 def parse_config(data: dict) -> Config:
     ctx = _Ctx()
     top = {"version", "label", "branch_prefix", "droplet", "limits", "setup",
-           "checks_setup", "checks", "preview", "design"}
+           "checks_setup", "checks", "preview", "design", "allowed_labelers"}
     if not isinstance(data, dict):
         raise ConfigError("<root>: must be a mapping")
     d = ctx.section(data, "", top)
@@ -293,6 +294,7 @@ def parse_config(data: dict) -> Config:
         checks=_checks(ctx, d.get("checks")),
         preview=_preview(ctx, d.get("preview")),
         design=design,
+        allowed_labelers=ctx.strings(d, "allowed_labelers", ""),
     )
     if ctx.errors:
         raise ConfigError("\n".join(ctx.errors))

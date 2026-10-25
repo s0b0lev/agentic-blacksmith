@@ -73,6 +73,7 @@ def test_context_from_config_file(tmp_path):
     assert ctx.work_dir == repo / ".blacksmith"
     assert ctx.prompts_dir == tmp_path / "prompts"
     assert ctx.env == {"HOME": "/h"}
+    assert ctx.repo == "o/r"
 
 
 def test_status_without_state(tmp_path, capsys):
@@ -182,7 +183,7 @@ def test_poll_and_review_round_print_round(tmp_path, capsys, monkeypatch):
     (repo / "blacksmith.yml").write_text(EXAMPLE_YML.read_text())
     calls = []
     monkeypatch.setattr(blacksmith.review, "review_round",
-                        lambda cfg, ctx, gh, run: calls.append(ctx.issue) or True)
+                        lambda cfg, ctx, gh, run, **kwargs: calls.append(ctx.issue) or True)
     assert main(["--config-file", str(path), "poll"]) == 0
     assert capsys.readouterr().out == "round: yes\n"
     assert main(["--config-file", str(path), "review-round"]) == 0
@@ -197,7 +198,7 @@ def test_poll_exits_0_on_error(tmp_path, capsys, monkeypatch):
     path, repo = _conf(tmp_path)
     (repo / "blacksmith.yml").write_text(EXAMPLE_YML.read_text())
 
-    def boom(*a):
+    def boom(*a, **k):
         raise RuntimeError("gh down")
 
     monkeypatch.setattr(blacksmith.review, "review_round", boom)
@@ -244,6 +245,12 @@ def test_config_get_scalars_and_booleans():
     assert _config_get("limits.lifetime_hours", "--config", str(EXAMPLE_YML)).stdout == "168\n"
 
 
+def test_config_get_empty_list_prints_nothing():
+    proc = _config_get("allowed_labelers", "--config", str(EXAMPLE_YML))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == ""
+
+
 def test_config_get_list_prints_lines():
     proc = _config_get("setup", "--config", str(EXAMPLE_YML))
     assert proc.returncode == 0, proc.stderr
@@ -251,6 +258,16 @@ def test_config_get_list_prints_lines():
     assert len(lines) == 3 and lines[1] == "cd admin && npm ci"
     checks = _config_get("checks", "--config", str(EXAMPLE_YML)).stdout.splitlines()
     assert checks[-1] == "cd api && .venv/bin/pytest -q" and len(checks) == 4
+
+
+def test_config_get_allowed_labelers_prints_lines(tmp_path):
+    cfg = tmp_path / "blacksmith.yml"
+    text = EXAMPLE_YML.read_text()
+    assert "\nallowed_labelers: []" in text
+    cfg.write_text(text.replace("\nallowed_labelers: []", "\nallowed_labelers: [alice, bob]", 1))
+    proc = _config_get("allowed_labelers", "--config", str(cfg))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "alice\nbob\n"
 
 
 def test_config_get_unknown_key_exits_3():
@@ -292,3 +309,65 @@ def test_fetch_issue_writes_issue_md(tmp_path, capsys, monkeypatch):
     out = repo / ".blacksmith" / "issue.md"
     assert capsys.readouterr().out == f"{out}\n"
     assert out.read_text() == "# T #7\n"
+
+
+def _telegram_env(monkeypatch, token="123:abc", chat="-1001"):
+    for key, value in (("TELEGRAM_BOT_TOKEN", token), ("TELEGRAM_CHAT_ID", chat)):
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
+
+
+def _capture_first_pass(monkeypatch, seen):
+    import blacksmith.stages
+    from blacksmith.state import State
+
+    def fake(cfg, ctx, gh, run, **kwargs):
+        seen.update(kwargs, repo=ctx.repo)
+        return State(7, "blacksmith/issue-7", stage="done")
+
+    monkeypatch.setattr(blacksmith.stages, "run_first_pass", fake)
+
+
+def test_run_passes_the_telegram_notifier_from_the_environment(tmp_path, capsys, monkeypatch):
+    import blacksmith.__main__ as cli
+    from blacksmith.notify import Telegram
+
+    path, repo = _conf(tmp_path)
+    (repo / "blacksmith.yml").write_text(EXAMPLE_YML.read_text())
+    monkeypatch.setattr(cli, "_github", lambda conf: StartupGitHub())
+    seen = {}
+    _capture_first_pass(monkeypatch, seen)
+    _telegram_env(monkeypatch)
+    assert cli.main(["--config-file", str(path), "run"]) == 0
+    assert isinstance(seen["notifier"], Telegram)
+    assert (seen["notifier"].token, seen["notifier"].chat_id) == ("123:abc", "-1001")
+    assert seen["repo"] == "o/r"
+
+
+def test_run_without_telegram_values_passes_no_notifier(tmp_path, capsys, monkeypatch):
+    import blacksmith.__main__ as cli
+
+    path, repo = _conf(tmp_path)
+    (repo / "blacksmith.yml").write_text(EXAMPLE_YML.read_text())
+    monkeypatch.setattr(cli, "_github", lambda conf: StartupGitHub())
+    seen = {}
+    _capture_first_pass(monkeypatch, seen)
+    _telegram_env(monkeypatch, token=None, chat=None)
+    assert cli.main(["--config-file", str(path), "run"]) == 0
+    assert seen["notifier"] is None
+
+
+def test_poll_passes_the_telegram_notifier(tmp_path, capsys, monkeypatch):
+    import blacksmith.review
+    from blacksmith.__main__ import main
+
+    path, repo = _conf(tmp_path)
+    (repo / "blacksmith.yml").write_text(EXAMPLE_YML.read_text())
+    seen = {}
+    monkeypatch.setattr(blacksmith.review, "review_round",
+                        lambda cfg, ctx, gh, run, **kwargs: seen.update(kwargs) or True)
+    _telegram_env(monkeypatch)
+    assert main(["--config-file", str(path), "poll"]) == 0
+    assert seen["notifier"].chat_id == "-1001"

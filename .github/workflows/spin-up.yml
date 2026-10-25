@@ -42,6 +42,10 @@ on:
         description: Base branch for the work branch; empty means the repository's default branch.
         type: string
         default: ""
+      telegram_chat_id:
+        description: Telegram chat id that receives stage notifications; empty disables them.
+        type: string
+        default: ""
     secrets:
       DIGITALOCEAN_TOKEN:
         required: true
@@ -54,6 +58,8 @@ on:
       BLACKSMITH_GITHUB_TOKEN:
         required: true
       FIGMA_API_KEY:
+        required: false
+      TELEGRAM_BOT_TOKEN:
         required: false
 
 permissions:
@@ -126,7 +132,7 @@ jobs:
           }
           if ! size="$(get droplet.size)" || ! region="$(get droplet.region)" \
              || ! image="$(get droplet.image)" || ! lifetime="$(get limits.lifetime_hours)" \
-             || ! label="$(get label)"; then
+             || ! label="$(get label)" || ! allowed="$(get allowed_labelers)"; then
             echo "::error::$CONFIG_PATH in $REPO is missing or invalid (see the log above)"
             exit 1
           fi
@@ -136,12 +142,19 @@ jobs:
             echo "DROPLET_IMAGE=$image"
             echo "LIFETIME_HOURS=$lifetime"
             echo "LABEL=$label"
+            echo "ALLOWED_LABELERS=${allowed//$'\n'/ }"
           } >> "$GITHUB_ENV"
 
       - name: Confirm issue is open and labeled
+        # Authorization: the user who triggered the run (ACTOR, the labeler) must be
+        # listed in `allowed_labelers` (case-insensitive) when that list is non-empty;
+        # otherwise they need admin, maintain or write permission on the repository (the
+        # legacy `permission` field reports maintain as write and triage as read). A failed
+        # permission lookup fails the step instead of allowing the run.
         id: check
         env:
           GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
         run: |
           issue_json="$(gh api "repos/$REPO/issues/$ISSUE")"
           state="$(jq -r .state <<<"$issue_json")"
@@ -149,12 +162,39 @@ jobs:
           if [ "$state" != "open" ]; then
             echo "::notice::$REPO#$ISSUE is $state; nothing to do"
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           elif [ "$labeled" != "true" ]; then
             echo "::notice::$REPO#$ISSUE no longer carries the '$LABEL' label; nothing to do"
             echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          if [ -n "$ALLOWED_LABELERS" ]; then
+            allowed=false
+            for login in $ALLOWED_LABELERS; do
+              if [ "${login,,}" = "${ACTOR,,}" ]; then
+                allowed=true
+              fi
+            done
+            if [ "$allowed" != true ]; then
+              echo "::notice::Blacksmith: @$ACTOR is not in allowed_labelers; not starting."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            if ! permission="$(gh api "repos/$REPO/collaborators/$ACTOR/permission" --jq .permission)"; then
+              echo "::error::cannot read the repository permission of @$ACTOR (does BLACKSMITH_GITHUB_TOKEN have access?)"
+              exit 1
+            fi
+            case "$permission" in
+              admin|maintain|write) ;;
+              *)
+                echo "::notice::Blacksmith: @$ACTOR has '$permission' permission, not write, maintain or admin; not starting."
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Resolve base branch
         if: steps.check.outputs.skip != 'true'
@@ -226,6 +266,8 @@ jobs:
           TF_VAR_claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           TF_VAR_github_token: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
           TF_VAR_figma_api_key: ${{ secrets.FIGMA_API_KEY }}
+          TF_VAR_telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TF_VAR_telegram_chat_id: ${{ inputs.telegram_chat_id }}
           TF_VAR_lifetime_hours: ${{ env.LIFETIME_HOURS }}
         run: terraform apply -auto-approve -input=false
 

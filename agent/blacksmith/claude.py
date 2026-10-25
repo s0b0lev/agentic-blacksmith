@@ -6,8 +6,9 @@ from pathlib import Path
 from blacksmith.runner import CommandRunner
 
 TIMEOUT_CODE = 124
-# The runner pushes and talks to GitHub; the agent session never needs the PAT.
-RUNNER_ONLY_ENV = ("GH_TOKEN", "BLACKSMITH_GITHUB_TOKEN")
+# The runner pushes, talks to GitHub and posts to Telegram; the agent session needs none of
+# those tokens.
+RUNNER_ONLY_ENV = ("GH_TOKEN", "BLACKSMITH_GITHUB_TOKEN", "TELEGRAM_BOT_TOKEN")
 
 
 def agent_env(env: Mapping[str, str]) -> dict[str, str]:

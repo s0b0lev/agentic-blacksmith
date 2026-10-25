@@ -79,3 +79,12 @@ def test_non_json_stdout_is_result_text(fake_runner, tmp_path):
     assert res.num_turns is None
     assert res.ok is True
     assert isinstance(res.transcript, Path)
+
+
+def test_agent_session_never_sees_the_telegram_token():
+    from blacksmith.claude import RUNNER_ONLY_ENV, agent_env
+
+    assert "TELEGRAM_BOT_TOKEN" in RUNNER_ONLY_ENV
+    env = agent_env({"TELEGRAM_BOT_TOKEN": "123:abc", "TELEGRAM_CHAT_ID": "-1",
+                     "HOME": "/h"})
+    assert env == {"TELEGRAM_CHAT_ID": "-1", "HOME": "/h"}

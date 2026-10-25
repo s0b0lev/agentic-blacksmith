@@ -6,7 +6,7 @@ import fcntl
 import json
 from collections.abc import Callable, Sequence
 
-from blacksmith import preview
+from blacksmith import notify, preview
 from blacksmith.claude import StageResult, agent_env, run_claude
 from blacksmith.config import Config, Limits
 from blacksmith.github import Comment, GitHub
@@ -32,6 +32,18 @@ def _log(ctx: RunContext, now_iso: Callable[[], str], msg: str) -> None:
 def _load(ctx: RunContext) -> State | None:
     path = ctx.work_dir / "state.json"
     return load_state(path) if path.exists() else None
+
+
+def _notify(ctx: RunContext, state: State, notifier: notify.Telegram | None,
+            now_iso: Callable[[], str], text: str) -> None:
+    """Best effort, like the round comment: a failed message is logged, never fatal."""
+    if notifier is None:
+        return
+    link = state.pr_url or notify.issue_url(ctx.repo, ctx.issue)
+    try:
+        notifier.send(notify.compose(ctx.repo, ctx.issue, "", text, link))
+    except Exception as exc:
+        _log(ctx, now_iso, f"telegram failed: {exc!r}")
 
 
 def render_comments(comments: Sequence[Comment]) -> str:
@@ -134,6 +146,7 @@ def review_round(
     claude: Callable[..., StageResult] = run_claude,
     deploy: Callable[..., preview.PreviewResult] = preview.deploy,
     now_iso: Callable[[], str] = utc_now_iso,
+    notifier: notify.Telegram | None = None,
 ) -> bool:
     """Address human comments posted since the last round. True when a round ran."""
     state = _load(ctx)
@@ -160,6 +173,7 @@ def review_round(
                 gh.upsert_comment(state.pr_number, f"round-{n}", summary)
             except Exception as exc:
                 _log(ctx, now_iso, f"round {n} summary comment failed: {exc!r}")
+            _notify(ctx, state, notifier, now_iso, summary)
             # Advance even after a failure so the same comments are not retried forever.
             state.last_seen = round_start
             state.round = n

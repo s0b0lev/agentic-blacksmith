@@ -10,16 +10,18 @@ locals {
     CLAUDE_CODE_OAUTH_TOKEN = var.claude_oauth_token
     BLACKSMITH_GITHUB_TOKEN = var.github_token
     FIGMA_API_KEY           = var.figma_api_key
+    TELEGRAM_BOT_TOKEN      = var.telegram_bot_token
   }
   config_map = {
-    ISSUE          = tostring(var.issue_number)
-    REPO           = var.repo
-    BASE_BRANCH    = var.base_branch
-    CONFIG_PATH    = var.config_path
-    PREVIEW_ZONE   = var.preview_zone
-    LIFETIME_HOURS = tostring(var.lifetime_hours)
-    TEMPLATE_REF   = var.template_ref
-    LABEL          = var.label
+    ISSUE            = tostring(var.issue_number)
+    REPO             = var.repo
+    BASE_BRANCH      = var.base_branch
+    CONFIG_PATH      = var.config_path
+    PREVIEW_ZONE     = var.preview_zone
+    LIFETIME_HOURS   = tostring(var.lifetime_hours)
+    TEMPLATE_REF     = var.template_ref
+    LABEL            = var.label
+    TELEGRAM_CHAT_ID = var.telegram_chat_id
   }
   env_content    = join("\n", [for k, v in local.env_map : "${k}=${v}"])
   config_content = join("\n", [for k, v in local.config_map : "${k}=${v}"])

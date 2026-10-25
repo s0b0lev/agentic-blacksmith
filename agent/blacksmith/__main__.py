@@ -39,6 +39,7 @@ def context_from(conf: Mapping[str, str], environ: Mapping[str, str]):
         host=conf["PREVIEW_HOST"],
         prompts_dir=Path(conf["PROMPTS_DIR"]),
         env=dict(environ),
+        repo=conf.get("REPO", ""),
     )
 
 
@@ -59,6 +60,13 @@ def _github(conf: dict[str, str]):
     from blacksmith.scrub import load_secret_values
 
     return GitHub(conf["REPO"], subprocess_runner, load_secret_values(os.environ))
+
+
+def _notifier():
+    """Telegram sender from TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, or None when unset."""
+    from blacksmith.notify import from_env
+
+    return from_env(os.environ)
 
 
 def _startup_failed(conf: Mapping[str, str], ctx, exc: BaseException, gh=None) -> int:
@@ -96,7 +104,7 @@ def _cmd_run(conf: dict[str, str], ctx) -> int:
         return _startup_failed(conf, ctx, exc)
     try:
         # Stage failures are salvaged inside; what escapes is start-up (issue fetch, state).
-        state = run_first_pass(cfg, ctx, gh, subprocess_runner)
+        state = run_first_pass(cfg, ctx, gh, subprocess_runner, notifier=_notifier())
     except Exception as exc:
         return _startup_failed(conf, ctx, exc, gh)
     print(f"finished: stage={state.stage} pr={state.pr_url}")
@@ -133,7 +141,8 @@ def _cmd_poll(conf: dict[str, str], ctx) -> int:
     cfg = _load_config(conf, ctx)
     if cfg is not None:
         try:
-            ran = review_round(cfg, ctx, _github(conf), subprocess_runner)
+            ran = review_round(cfg, ctx, _github(conf), subprocess_runner,
+                               notifier=_notifier())
         except Exception as exc:  # the timer polls again in a minute
             print(f"poll failed: {exc!r}", file=sys.stderr)
     print(f"round: {'yes' if ran else 'no'}")

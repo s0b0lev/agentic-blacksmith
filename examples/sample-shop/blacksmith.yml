@@ -3,6 +3,7 @@
 version: 1
 label: blacksmith                 # trigger label
 branch_prefix: blacksmith/issue-  # branch per issue
+allowed_labelers: []   # empty = anyone with write access; list GitHub logins to restrict further
 droplet:
   size: s-4vcpu-8gb
   region: fra1

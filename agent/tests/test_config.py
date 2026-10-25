@@ -77,6 +77,26 @@ def test_defaults():
     assert cfg.preview.drop == () and cfg.preview.infra == ()
     assert cfg.preview.env == {}
     assert cfg.preview.env_example is None and cfg.preview.seed is None
+    assert cfg.allowed_labelers == ()
+
+
+def test_allowed_labelers_parsed():
+    data = minimal()
+    data["allowed_labelers"] = ["alice", "Bob"]
+    assert parse_config(data).allowed_labelers == ("alice", "Bob")
+
+
+def test_allowed_labelers_default_empty():
+    assert parse_config(minimal()).allowed_labelers == ()
+
+
+@pytest.mark.parametrize("bad", ["alice", [""], ["alice", 3], {"alice": True}])
+def test_allowed_labelers_bad_type_rejected(bad):
+    data = minimal()
+    data["allowed_labelers"] = bad
+    with pytest.raises(ConfigError) as exc:
+        parse_config(data)
+    assert str(exc.value).startswith("allowed_labelers: must be a list of non-empty strings")
 
 
 def test_errors_are_collected():

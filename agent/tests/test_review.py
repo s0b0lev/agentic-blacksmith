@@ -7,7 +7,7 @@ from blacksmith.github import Comment
 from blacksmith.review import render_comments, review_round, self_destruct
 from blacksmith.runner import CommandResult
 from blacksmith.state import State, load_state, save_state
-from test_stages import DOWN, UP, FakeClaude, FakeGitHub, _write, make_env
+from test_stages import DOWN, UP, FakeClaude, FakeGitHub, FakeNotifier, _write, make_env
 
 T1 = "2026-10-23T12:00:00+00:00"
 T2 = "2026-10-23T12:30:00+00:00"
@@ -80,7 +80,7 @@ def prepare(tmp_path, *, pr=5, comments=(REVIEW, ISSUE_COMMENT), round=0, **limi
 def go(e, *times):
     clock = iter(times or (T1, T2, T2, T2, T2, T2, T2))
     return review_round(e.cfg, e.ctx, e.gh, e.run, claude=e.claude, deploy=e.deploy,
-                        now_iso=lambda: next(clock))
+                        now_iso=lambda: next(clock), notifier=getattr(e, "notifier", None))
 
 
 def state_of(e):
@@ -290,3 +290,21 @@ def test_round_claude_env_has_no_github_tokens(tmp_path):
     env = e.claude.calls[0]["env"]
     assert "GH_TOKEN" not in env and "BLACKSMITH_GITHUB_TOKEN" not in env
     assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat"
+
+
+def test_round_summary_reaches_telegram_with_the_pr_link(tmp_path):
+    e = prepare(tmp_path)
+    e.notifier = FakeNotifier()
+    assert go(e) is True
+    assert e.notifier.sent == [
+        "acme/shop#7\nRound 1: addressed 2 comment(s) in abc1234; preview ok\nhttps://x/pull/5"
+    ]
+
+
+def test_round_telegram_failure_is_logged_not_fatal(tmp_path):
+    e = prepare(tmp_path)
+    e.notifier = FakeNotifier(fail=True)
+    assert go(e) is True
+    assert state_of(e).round == 1
+    log = (e.ctx.work_dir / "log.md").read_text()
+    assert "telegram failed: RuntimeError('telegram down')" in log

@@ -25,8 +25,9 @@ SECRETS = (
     "FIGMA_API_KEY",
     "SPACES_ACCESS_KEY_ID",
     "SPACES_SECRET_ACCESS_KEY",
+    "TELEGRAM_BOT_TOKEN",
 )
-VARIABLES = ("BLACKSMITH_STATE_BUCKET", "BLACKSMITH_PREVIEW_ZONE")
+VARIABLES = ("BLACKSMITH_STATE_BUCKET", "BLACKSMITH_PREVIEW_ZONE", "BLACKSMITH_TELEGRAM_CHAT_ID")
 
 
 def test_cleanup_script_shellcheck():
@@ -73,7 +74,7 @@ def test_docs_exist_and_link():
         assert needle in adopting, needle
     operations = OPERATIONS.read_text()
     for needle in ("blacksmith-bootstrap.log", "journalctl -u blacksmith-run",
-                   "blacksmith-self-destruct"):
+                   "blacksmith-self-destruct", "Telegram"):
         assert needle in operations, needle
     assert CHECKLIST.exists()
 

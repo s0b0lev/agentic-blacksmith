@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from blacksmith import git, preview
+from blacksmith import git, notify, preview
 from blacksmith.claude import StageResult, agent_env, run_claude
 from blacksmith.config import Config
 from blacksmith.github import GitHub, Issue
@@ -44,6 +44,7 @@ class RunContext:
     prompts_dir: Path
     env: Mapping[str, str]
     now: Callable[[], float] = time.monotonic
+    repo: str = ""  # owner/name, for notification links
 
 
 @dataclass
@@ -55,6 +56,7 @@ class PipelineEnv:
     now_iso: Callable[[], str]
     issue: Issue
     state_path: Path
+    notifier: notify.Telegram | None = None
     milestones: list[str] = field(default_factory=list)
     transcripts: int = 0
     last_session: tuple[str, StageResult] | None = None  # within the current stage
@@ -106,10 +108,32 @@ def _post_progress(gh: GitHub, ctx: RunContext, state: State, env: PipelineEnv) 
     save_state(env.state_path, state)
 
 
-def _milestone(gh: GitHub, ctx: RunContext, state: State, env: PipelineEnv, text: str) -> None:
+def _notify(ctx: RunContext, state: State, env: PipelineEnv, text: str) -> None:
+    """Best effort: a failed Telegram message is logged, never fatal."""
+    if env.notifier is None:
+        return
+    link = state.pr_url or notify.issue_url(ctx.repo, ctx.issue)
+    try:
+        env.notifier.send(notify.compose(ctx.repo, ctx.issue, env.issue.title, text, link))
+    except Exception as exc:
+        _log(ctx, env, f"telegram failed: {exc!r}")
+
+
+def _milestone(gh: GitHub, ctx: RunContext, state: State, env: PipelineEnv, text: str,
+               short: str | None = None) -> None:
+    """Record a milestone in the progress comment; ``short`` replaces it in notifications."""
     env.milestones.append(text)
     _log(ctx, env, text.splitlines()[0])
     _post_progress(gh, ctx, state, env)
+    _notify(ctx, state, env, text if short is None else short)
+
+
+def _plan_summary(plan_md: str) -> str:
+    for line in plan_md.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            return f"Plan: {line[:300]}"
+    return "Plan posted"
 
 
 def _claude(cfg: Config, ctx: RunContext, run: CommandRunner, env: PipelineEnv, name: str,
@@ -162,7 +186,8 @@ def _fresh(path: Path) -> Path:
 def stage_plan(cfg, ctx, gh, run, state, env) -> None:
     plan = _fresh(ctx.work_dir / "plan.md")
     _claude(cfg, ctx, run, env, "plan")
-    _milestone(gh, ctx, state, env, "### Plan\n\n" + _require(plan).strip())
+    plan_md = _require(plan).strip()
+    _milestone(gh, ctx, state, env, "### Plan\n\n" + plan_md, short=_plan_summary(plan_md))
 
 
 def stage_build(cfg, ctx, gh, run, state, env) -> None:
@@ -391,6 +416,7 @@ def run_first_pass(
     claude: Callable[..., StageResult] = run_claude,
     deploy: Callable[..., preview.PreviewResult] = preview.deploy,
     now_iso: Callable[[], str] = utc_now_iso,
+    notifier: notify.Telegram | None = None,
 ) -> State:
     for d in (ctx.work_dir, ctx.work_dir / "transcripts", ctx.work_dir / "shots"):
         d.mkdir(parents=True, exist_ok=True)
@@ -400,12 +426,13 @@ def run_first_pass(
     if not (ctx.work_dir / "issue.md").exists():
         write_issue_markdown(gh, ctx.issue, ctx.work_dir, issue=issue)
     env = PipelineEnv(claude=claude, deploy=deploy, now_iso=now_iso, issue=issue,
-                      state_path=state_path)
+                      state_path=state_path, notifier=notifier)
     try:
         for name, stage in STAGES:
             state.stage = name
             _log(ctx, env, f"stage {name}")
             _post_progress(gh, ctx, state, env)
+            _notify(ctx, state, env, f"stage {name}")
             env.last_session = None
             stage(cfg, ctx, gh, run, state, env)
     except StageFailed as exc:

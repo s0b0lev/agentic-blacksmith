@@ -27,3 +27,7 @@ def test_load_secret_values_skips_empty():
     env = {"CLAUDE_CODE_OAUTH_TOKEN": "tok-aaaaaaaa", "FIGMA_API_KEY": "", "DIGITALOCEAN_TOKEN": "do-bbbbbbbb", "OTHER": "x"}
     assert load_secret_values(env) == ("tok-aaaaaaaa", "do-bbbbbbbb")
     assert SECRET_KEYS[0] == "CLAUDE_CODE_OAUTH_TOKEN"
+
+
+def test_telegram_bot_token_is_a_secret():
+    assert "TELEGRAM_BOT_TOKEN" in SECRET_KEYS

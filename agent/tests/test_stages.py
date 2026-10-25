@@ -135,7 +135,7 @@ def make_env(tmp_path, *, env=None, changed="storefront/app/page.tsx\n", **limit
         cfg = dataclasses.replace(cfg, limits=dataclasses.replace(cfg.limits, **limits))
     ctx = RunContext(
         repo_root=repo, work_dir=repo / ".blacksmith", issue=7, branch="blacksmith/issue-7",
-        base_branch="main", host="pr-7.example.com", prompts_dir=prompts,
+        base_branch="main", host="pr-7.example.com", prompts_dir=prompts, repo="acme/shop",
         env={"FIGMA_API_KEY": "figma-key-123", "HOME": "/home/blacksmith"} if env is None else env,
     )
     run = EventRunner(events)
@@ -148,7 +148,7 @@ def make_env(tmp_path, *, env=None, changed="storefront/app/page.tsx\n", **limit
 
 def go(e):
     return run_first_pass(e.cfg, e.ctx, e.gh, e.run, claude=e.claude, deploy=e.deploy,
-                          now_iso=lambda: NOW)
+                          now_iso=lambda: NOW, notifier=getattr(e, "notifier", None))
 
 
 def test_happy_path_calls_stages_in_order_and_opens_pr(tmp_path):
@@ -459,3 +459,69 @@ def test_ok_session_reason_unchanged(tmp_path):
     reason = next(line for line in e.gh.prs[0]["body"].splitlines()
                   if line.startswith("Reason: "))
     assert reason == "Reason: plan.md not written"
+
+
+# -- Telegram notifications ----------------------------------------------------------
+
+class FakeNotifier:
+    def __init__(self, fail: bool = False) -> None:
+        self.sent: list[str] = []
+        self.fail = fail
+
+    def send(self, text: str) -> None:
+        if self.fail:
+            raise RuntimeError("telegram down")
+        self.sent.append(text)
+
+
+ISSUE_URL = "https://github.com/acme/shop/issues/7"
+HEAD = "acme/shop#7 Scale widget"
+
+
+def test_telegram_gets_every_stage_change_and_milestone(tmp_path):
+    e = make_env(tmp_path)
+    e.notifier = FakeNotifier()
+    go(e)
+    assert e.notifier.sent[0] == f"{HEAD}\nstage plan\n{ISSUE_URL}"
+    assert e.notifier.sent[1] == f"{HEAD}\nPlan: Goal: add a scale widget\n{ISSUE_URL}"
+    assert (f"{HEAD}\nPreview is up at https://pr-7.example.com/\nlogin: preview / pw123\n"
+            f"{ISSUE_URL}") in e.notifier.sent
+    assert e.notifier.sent[-1] == f"{HEAD}\nOpened https://x/pull/1\nhttps://x/pull/1"
+    stages = [m.splitlines()[1] for m in e.notifier.sent if m.splitlines()[1].startswith("stage ")]
+    assert stages == ["stage plan", "stage build", "stage preview", "stage verify",
+                      "stage design", "stage pr"]
+
+
+def test_telegram_plan_summary_skips_headings(tmp_path):
+    e = make_env(tmp_path)
+    e.notifier = FakeNotifier()
+    e.claude.actions["plan"] = _write("plan.md", "## Goal\n\nAdd a widget.\n\n## Criteria\n")
+    go(e)
+    assert e.notifier.sent[1] == f"{HEAD}\nPlan: Add a widget.\n{ISSUE_URL}"
+
+
+def test_telegram_failure_is_logged_not_fatal(tmp_path):
+    e = make_env(tmp_path)
+    e.notifier = FakeNotifier(fail=True)
+    state = go(e)
+    assert state.stage == "done" and e.gh.prs[0]["draft"] is False
+    log = (e.ctx.work_dir / "log.md").read_text()
+    assert "telegram failed: RuntimeError('telegram down')" in log
+
+
+def test_telegram_gets_the_salvage_reason_with_the_draft_link(tmp_path):
+    e = make_env(tmp_path)
+    e.notifier = FakeNotifier()
+    e.claude.actions["plan"] = lambda work_dir: None
+    go(e)
+    assert e.notifier.sent[-1] == (
+        f"{HEAD}\nStopped at stage plan: plan.md not written. Opened draft https://x/pull/1\n"
+        "https://x/pull/1"
+    )
+
+
+def test_no_notifier_means_no_messages(tmp_path):
+    e = make_env(tmp_path)
+    state = go(e)
+    assert state.stage == "done"
+    assert "telegram" not in (e.ctx.work_dir / "log.md").read_text()

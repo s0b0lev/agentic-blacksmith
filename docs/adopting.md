@@ -197,6 +197,7 @@ On the **Secrets** tab, add:
 | `SPACES_SECRET_ACCESS_KEY` | Spaces secret key from step 3 |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Output of `claude setup-token` from step 5 |
 | `FIGMA_API_KEY` | Optional; Figma personal access token from step 6 |
+| `TELEGRAM_BOT_TOKEN` | Optional; Telegram bot token from step 9 |
 
 On the **Variables** tab, add:
 
@@ -204,6 +205,7 @@ On the **Variables** tab, add:
 |---|---|
 | `BLACKSMITH_STATE_BUCKET` | Name of the Spaces bucket from step 3 (required) |
 | `BLACKSMITH_PREVIEW_ZONE` | Delegated DNS zone from step 4; leave it unset to use nip.io |
+| `BLACKSMITH_TELEGRAM_CHAT_ID` | Telegram chat id from step 9; leave it unset to send no notifications |
 
 Finally, create the label: Issues → Labels → New label → name `blacksmith`.
 
@@ -217,8 +219,9 @@ Save this as `.github/workflows/blacksmith.yml` in your repository. It is the sa
 ```yaml
 # Copy to .github/workflows/blacksmith.yml in the target repository.
 # Needs secrets DIGITALOCEAN_TOKEN, SPACES_ACCESS_KEY_ID, SPACES_SECRET_ACCESS_KEY,
-# CLAUDE_CODE_OAUTH_TOKEN, BLACKSMITH_GITHUB_TOKEN (and optionally FIGMA_API_KEY), and
-# variables BLACKSMITH_STATE_BUCKET and BLACKSMITH_PREVIEW_ZONE (may be empty for nip.io).
+# CLAUDE_CODE_OAUTH_TOKEN, BLACKSMITH_GITHUB_TOKEN (optionally FIGMA_API_KEY and
+# TELEGRAM_BOT_TOKEN), and variables BLACKSMITH_STATE_BUCKET, BLACKSMITH_PREVIEW_ZONE (may be
+# empty for nip.io) and BLACKSMITH_TELEGRAM_CHAT_ID (may be empty to skip Telegram).
 # The label below must match `label:` in blacksmith.yml. Secrets are mapped explicitly:
 # `secrets: inherit` only works within one organization or enterprise.
 name: blacksmith
@@ -239,6 +242,7 @@ jobs:
       issue: ${{ github.event.issue.number }}
       state_bucket: ${{ vars.BLACKSMITH_STATE_BUCKET }}
       preview_zone: ${{ vars.BLACKSMITH_PREVIEW_ZONE }}
+      telegram_chat_id: ${{ vars.BLACKSMITH_TELEGRAM_CHAT_ID }}
     secrets:
       DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
       SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
@@ -246,6 +250,7 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       BLACKSMITH_GITHUB_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
       FIGMA_API_KEY: ${{ secrets.FIGMA_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
   resolve:
     if: >-
@@ -302,6 +307,7 @@ jobs:
       issue: ${{ fromJSON(needs.resolve.outputs.issue) }}
       state_bucket: ${{ vars.BLACKSMITH_STATE_BUCKET }}
       preview_zone: ${{ vars.BLACKSMITH_PREVIEW_ZONE }}
+      telegram_chat_id: ${{ vars.BLACKSMITH_TELEGRAM_CHAT_ID }}
     secrets:
       DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
       SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
@@ -309,6 +315,7 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       BLACKSMITH_GITHUB_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
       FIGMA_API_KEY: ${{ secrets.FIGMA_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 ```
 
 Until the `v1` tag is published, pin both `uses:` lines to `@master` and set
@@ -336,6 +343,13 @@ are errors. The sections:
 **Top level.** `version` must be `1`. `label` (default `blacksmith`) is the trigger label and
 must match the workflow. `branch_prefix` (default `blacksmith/issue-`) names the work branch;
 issue 12 works on `blacksmith/issue-12`.
+
+`allowed_labelers` (default empty) restricts who can start a run. When it is empty, the user
+who added the label must have write, maintain or admin permission on the repository; the
+spin-up workflow looks this up with `BLACKSMITH_GITHUB_TOKEN` and fails if the lookup fails.
+When it lists GitHub logins (for example `[alice, bob]`), only those users can start a run,
+compared case-insensitively, whatever their permission. Anyone else's label is ignored: the
+run ends with a notice and no droplet is created.
 
 **`droplet`.** `size` (default `s-4vcpu-8gb`), `region` (default `fra1`) and `image` (default
 `ubuntu-24-04-x64`) are DigitalOcean slugs. Bootstrap expects Ubuntu. Pick a size that can
@@ -403,7 +417,27 @@ Commit both files to the default branch. Then add the `blacksmith` label to an i
 about two minutes the issue gets a "Blacksmith is working on this" comment with the preview
 URL. [operations.md](operations.md) explains what happens next and where to look.
 
-## 9. Warnings
+## 9. Optional: Telegram notifications
+
+The agent can post one short message to a Telegram chat for every stage change and
+milestone: the plan's first line, "Preview is up at ..." with the login, "Opened <PR URL>",
+"Stopped at stage ..." with the reason, and each review round's summary. Every message
+starts with the repository and issue and ends with a link to the issue or pull request.
+Nothing is sent unless both values below are set.
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and copy its token.
+2. Add the bot to the group that should receive the messages.
+3. Find the chat id: post a message in the group, then open
+   `https://api.telegram.org/bot<token>/getUpdates` in a browser and read `chat.id` (group
+   ids are negative).
+4. Store the token as the secret `TELEGRAM_BOT_TOKEN` and the chat id as the variable
+   `BLACKSMITH_TELEGRAM_CHAT_ID` (step 7). The workflow from step 8 passes both through.
+
+Messages are plain text. The preview login is included, so use a private group. The token
+lives on the droplet next to the other secrets; the coding agent's own sessions do not see
+it, and a failed message is logged in `.blacksmith/log.md` and never fails a stage.
+
+## 10. Warnings
 
 - The preview is public on the internet. Only basic auth protects it, and the username and
   password are in the pull request body and the issue's progress comment, so anyone who can
@@ -415,8 +449,12 @@ URL. [operations.md](operations.md) explains what happens next and where to look
   droplet allows pushes to the work branch and `blacksmith-assets/issue-<n>` only, but it is
   a guard against mistakes, not a security boundary: the agent runs on the same machine as
   the token and could push around the hook. Add branch protection where your plan allows it.
-- Anyone who can add the label to an issue can start a droplet, which costs money and uses
-  your Claude subscription. Limit who has triage access.
+- Starting a droplet costs money and uses your Claude subscription. GitHub only lets users
+  with triage or higher add labels; the template additionally requires the labeler to have
+  write, maintain or admin permission, or to be listed in `allowed_labelers`. Rejected runs
+  still start a short workflow run. To reject them before any runner starts, also add a
+  `contains(fromJSON('["alice", "bob"]'), github.actor)` clause to the `spin-up` job's `if:`
+  in your workflow (`contains` compares case-insensitively).
 - The tokens live in the droplet's user data and in the Terraform state in your Spaces
   bucket. Anyone with root on the droplet or read access to the bucket can read them.
 - The agent itself can read the tokens. It runs as the unprivileged `blacksmith` user, but
@@ -431,7 +469,7 @@ URL. [operations.md](operations.md) explains what happens next and where to look
 - Changing any token (rotating a secret) changes the droplet's user data, so the next
   spin-up for an issue that already has a droplet replaces that droplet.
 
-## 10. Images your compose file can no longer pull
+## 11. Images your compose file can no longer pull
 
 Production compose files sometimes reference images that are no longer pullable, for example
 a `latest` tag that was removed. The preview would fail on `docker compose up`. Four keys work

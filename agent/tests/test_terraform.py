@@ -28,6 +28,8 @@ EXPECTED_VARIABLES = {
     "github_token",
     "figma_api_key",
     "lifetime_hours",
+    "telegram_bot_token",
+    "telegram_chat_id",
 }
 
 NETWORK_HINTS = (
@@ -171,3 +173,12 @@ def test_variable_validation_rejects(tmp_path, variables, message):
     output = " ".join((result.stdout + result.stderr).split())
     assert "Invalid value for variable" in output
     assert message in output
+
+
+def test_telegram_values_reach_the_droplet_files():
+    main = (TF_DIR / "main.tf").read_text()
+    assert re.search(r"TELEGRAM_BOT_TOKEN\s*=\s*var\.telegram_bot_token", main)
+    assert re.search(r"TELEGRAM_CHAT_ID\s*=\s*var\.telegram_chat_id", main)
+    # The token belongs in the 0600 env file, the chat id in the world-readable config.
+    config_map = main.index("config_map = {")
+    assert main.index("TELEGRAM_BOT_TOKEN") < config_map < main.index("TELEGRAM_CHAT_ID")

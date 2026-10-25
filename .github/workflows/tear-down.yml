@@ -42,6 +42,10 @@ on:
         description: Base branch for the work branch; empty means the repository's default branch.
         type: string
         default: ""
+      telegram_chat_id:
+        description: Telegram chat id that receives stage notifications; empty disables them.
+        type: string
+        default: ""
     secrets:
       DIGITALOCEAN_TOKEN:
         required: true
@@ -54,6 +58,8 @@ on:
       BLACKSMITH_GITHUB_TOKEN:
         required: true
       FIGMA_API_KEY:
+        required: false
+      TELEGRAM_BOT_TOKEN:
         required: false
 
 permissions:
@@ -213,6 +219,8 @@ jobs:
           TF_VAR_claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           TF_VAR_github_token: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
           TF_VAR_figma_api_key: ${{ secrets.FIGMA_API_KEY }}
+          TF_VAR_telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TF_VAR_telegram_chat_id: ${{ inputs.telegram_chat_id }}
           # TF_VAR_base_branch, TF_VAR_label, TF_VAR_droplet_size, TF_VAR_droplet_region,
           # TF_VAR_droplet_image and TF_VAR_lifetime_hours come from "Read config" via $GITHUB_ENV.
         run: terraform destroy -auto-approve -input=false

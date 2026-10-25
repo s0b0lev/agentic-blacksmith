@@ -74,6 +74,29 @@ def test_no_secret_on_command_line(path):
     assert not offenders, f"secrets referenced in run: {offenders}"
 
 
+def test_spin_up_gates_on_allowed_labelers_or_write_permission():
+    doc = _load(SPIN_UP)
+    steps = doc["jobs"]["spin-up"]["steps"]
+    names = [s.get("name") for s in steps]
+    read = steps[names.index("Read config")]["run"]
+    assert "get allowed_labelers" in read and "ALLOWED_LABELERS=" in read
+    check = steps[names.index("Confirm issue is open and labeled")]
+    assert check["id"] == "check"
+    assert check["env"]["ACTOR"] == "${{ github.actor }}"
+    script = check["run"]
+    assert "$ALLOWED_LABELERS" in script and "not in allowed_labelers" in script
+    assert 'gh api "repos/$REPO/collaborators/$ACTOR/permission" --jq .permission' in script
+    assert "admin|maintain|write" in script and "::error::" in script
+    assert names.index("Confirm issue is open and labeled") < names.index("Terraform apply")
+    # github.actor is untrusted text: it may appear only as an env: mapping value.
+    offenders = [line for line in _run_lines(doc) if "github.actor" in line]
+    assert not offenders, f"github.actor referenced in run: {offenders}"
+    env_values = [v for job in doc["jobs"].values() for st in job["steps"]
+                  for v in (st.get("env") or {}).values()]
+    in_env = sum("github.actor" in str(v) for v in env_values)
+    assert in_env >= 1 and SPIN_UP.read_text().count("github.actor") == in_env
+
+
 def test_adopter_example_uses_pinned_template():
     jobs = _load(ADOPTER)["jobs"]
     uses = [job["uses"] for job in jobs.values() if "uses" in job]
@@ -93,7 +116,7 @@ def test_adopter_example_maps_secrets_explicitly():
     for job in callers:
         secrets = job.get("secrets")
         assert isinstance(secrets, dict), f"expected an explicit secrets mapping, got {secrets!r}"
-        for name in REQUIRED_SECRETS | {"FIGMA_API_KEY"}:
+        for name in REQUIRED_SECRETS | {"FIGMA_API_KEY", "TELEGRAM_BOT_TOKEN"}:
             assert secrets.get(name) == f"${{{{ secrets.{name} }}}}", name
 
 
@@ -167,3 +190,20 @@ def test_actionlint():
         text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("path", [SPIN_UP, TEAR_DOWN], ids=lambda p: p.name)
+def test_telegram_is_optional_and_reaches_terraform(path):
+    call = _on(_load(path))["workflow_call"]
+    assert not call["secrets"]["TELEGRAM_BOT_TOKEN"].get("required", False)
+    assert call["inputs"]["telegram_chat_id"]["default"] == ""
+    text = path.read_text()
+    assert "TF_VAR_telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}" in text
+    assert "TF_VAR_telegram_chat_id: ${{ inputs.telegram_chat_id }}" in text
+
+
+def test_adopter_example_wires_telegram_into_both_calls():
+    jobs = _load(ADOPTER)["jobs"]
+    for name in ("spin-up", "tear-down"):
+        assert jobs[name]["secrets"]["TELEGRAM_BOT_TOKEN"] == "${{ secrets.TELEGRAM_BOT_TOKEN }}"
+        assert jobs[name]["with"]["telegram_chat_id"] == "${{ vars.BLACKSMITH_TELEGRAM_CHAT_ID }}"

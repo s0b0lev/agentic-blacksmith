@@ -53,6 +53,12 @@ invalid `CLAUDE_CODE_OAUTH_TOKEN` (bootstrap runs a one-turn Claude smoke test i
 lifetime timer is installed before anything that can fail, so a failed droplet still destroys
 itself after `limits.lifetime_hours`; send the self-destruct event (below) to remove it sooner.
 
+If the repository sets `TELEGRAM_BOT_TOKEN` and `BLACKSMITH_TELEGRAM_CHAT_ID`
+([adopting.md](adopting.md), step 9), the same milestones also arrive in that Telegram chat,
+one message per stage change, with the preview login and the PR link, so you rarely need to
+open the issue to know where a run is. A failed Telegram message is logged in
+`.blacksmith/log.md` as `telegram failed: ...` and never stops the run.
+
 ## SSH into the droplet
 
 The droplet's SSH key exists only in the Terraform state. To read it, initialise Terraform

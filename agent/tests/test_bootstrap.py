@@ -141,6 +141,19 @@ def test_observability_renders_config_and_runs_alloy_as_root():
     assert "apt.grafana.com" in func
 
 
+def test_observability_validates_before_install_and_keeps_diagnostics_out_of_log():
+    text = BOOTSTRAP.read_text()
+    func = text[text.index("setup_observability() {"):text.index('step 1 "')]
+    validate = func.index('alloy validate "$rendered"')
+    assert validate < func.index('mv "$rendered" /etc/alloy/config.alloy')
+    assert 'GC_LOKI_URL="$loki_url"' in func[:validate] and "GC_TOKEN=x" not in func
+    invalid = func.index("alloy config invalid")
+    line = func[func.rindex("\n", 0, invalid):func.index("\n", invalid)]
+    count = '$(wc -l <<< "$out")'
+    assert count in line and "$out" not in line.replace(count, "")  # only a line count
+    assert 'rm -f "$rendered"' in func[invalid:func.index('mv "$rendered"')]
+
+
 def test_lifetime_timer_enabled_before_any_apt_call():
     text = BOOTSTRAP.read_text()
     body = text[text.index('step 1 "'):]

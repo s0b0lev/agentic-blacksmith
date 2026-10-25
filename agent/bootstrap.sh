@@ -118,7 +118,7 @@ log "bootstrap for $REPO#$ISSUE (base $BASE_BRANCH, config $CONFIG_PATH)"
 # from `python3 -m blacksmith alloy-config`). Called as `if ! setup_observability`, where
 # errexit is off: every command that matters checks itself, and nothing here dies or exits.
 setup_observability() {
-  local rendered out
+  local rendered out loki_url loki_user prom_url prom_user token
   if ! command -v alloy >/dev/null; then
     curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/grafana.gpg \
       || return 1
@@ -128,39 +128,42 @@ setup_observability() {
     apt_get install alloy || return 1
   fi
   install -d -m 0755 /etc/alloy || return 1
-  rendered="$(mktemp)" || return 1
+  loki_url="$(file_get "$CONF" LOKI_URL)"
+  loki_user="$(file_get "$CONF" LOKI_USER)"
+  prom_url="$(file_get "$CONF" PROMETHEUS_URL)"
+  prom_user="$(file_get "$CONF" PROMETHEUS_USER)"
+  token="$(file_get "$ENV_FILE" GRAFANA_CLOUD_TOKEN)"
+  rendered="$(mktemp --suffix=.alloy)" || return 1
   if ! PYTHONPATH="$AGENT" python3 -P -m blacksmith alloy-config --env "$ENV_FILE" --runner-config "$CONF" \
       > "$rendered"; then
     rm -f "$rendered"
     return 1
+  fi
+  # Validate before replacing a working config. `alloy validate` exists from Alloy 1.9; older
+  # packages print "unknown command". Its diagnostics quote config lines, which hold the
+  # redaction regex of secret values, so only their line count goes to the log.
+  if ! out="$(GC_LOKI_URL="$loki_url" GC_LOKI_USER="$loki_user" GC_PROM_URL="$prom_url" \
+      GC_PROM_USER="$prom_user" GC_TOKEN="$token" alloy validate "$rendered" 2>&1)"; then
+    if grep -q "unknown command" <<< "$out"; then
+      log "observability: this alloy has no validate command; skipping validation"
+    else
+      log "observability: alloy config invalid ($(wc -l <<< "$out") lines of diagnostics; run alloy validate by hand)"
+      rm -f "$rendered"
+      return 1
+    fi
   fi
   mv "$rendered" /etc/alloy/config.alloy || { rm -f "$rendered"; return 1; }
   chmod 0600 /etc/alloy/config.alloy || return 1
   # /etc/default/alloy is the unit's EnvironmentFile; keep the package's own lines.
   touch /etc/default/alloy && chmod 0600 /etc/default/alloy || return 1
   sed -i '/^GC_/d' /etc/default/alloy || return 1
-  {
-    printf 'GC_LOKI_URL=%s\n' "$(file_get "$CONF" LOKI_URL)"
-    printf 'GC_LOKI_USER=%s\n' "$(file_get "$CONF" LOKI_USER)"
-    printf 'GC_PROM_URL=%s\n' "$(file_get "$CONF" PROMETHEUS_URL)"
-    printf 'GC_PROM_USER=%s\n' "$(file_get "$CONF" PROMETHEUS_USER)"
-    printf 'GC_TOKEN=%s\n' "$(file_get "$ENV_FILE" GRAFANA_CLOUD_TOKEN)"
-  } >> /etc/default/alloy || return 1
+  printf 'GC_LOKI_URL=%s\nGC_LOKI_USER=%s\nGC_PROM_URL=%s\nGC_PROM_USER=%s\nGC_TOKEN=%s\n' \
+    "$loki_url" "$loki_user" "$prom_url" "$prom_user" "$token" >> /etc/default/alloy || return 1
   # root: the journal, the Docker socket and the agent user's home. The droplet is disposable.
   install -d -m 0755 /etc/systemd/system/alloy.service.d || return 1
   printf '[Service]\nUser=root\nGroup=root\n' > /etc/systemd/system/alloy.service.d/override.conf \
     || return 1
   systemctl daemon-reload || return 1
-  # `alloy validate` exists from Alloy 1.9; older packages print "unknown command".
-  if ! out="$(GC_LOKI_URL=x GC_LOKI_USER=x GC_PROM_URL=x GC_PROM_USER=x GC_TOKEN=x \
-      alloy validate /etc/alloy/config.alloy 2>&1)"; then
-    if grep -q "unknown command" <<< "$out"; then
-      log "observability: this alloy has no validate command; skipping validation"
-    else
-      log "observability: alloy config invalid: $(tail -n 20 <<< "$out")"
-      return 1
-    fi
-  fi
   systemctl enable --now alloy || return 1
   systemctl restart alloy || return 1
   for _ in $(seq 1 20); do

@@ -11,17 +11,26 @@ locals {
     BLACKSMITH_GITHUB_TOKEN = var.github_token
     FIGMA_API_KEY           = var.figma_api_key
     TELEGRAM_BOT_TOKEN      = var.telegram_bot_token
+    GRAFANA_CLOUD_TOKEN     = var.grafana_cloud_token
   }
   config_map = {
-    ISSUE            = tostring(var.issue_number)
-    REPO             = var.repo
-    BASE_BRANCH      = var.base_branch
-    CONFIG_PATH      = var.config_path
-    PREVIEW_ZONE     = var.preview_zone
-    LIFETIME_HOURS   = tostring(var.lifetime_hours)
-    TEMPLATE_REF     = var.template_ref
-    LABEL            = var.label
-    TELEGRAM_CHAT_ID = var.telegram_chat_id
+    ISSUE                 = tostring(var.issue_number)
+    REPO                  = var.repo
+    BASE_BRANCH           = var.base_branch
+    CONFIG_PATH           = var.config_path
+    PREVIEW_ZONE          = var.preview_zone
+    LIFETIME_HOURS        = tostring(var.lifetime_hours)
+    TEMPLATE_REF          = var.template_ref
+    LABEL                 = var.label
+    TELEGRAM_CHAT_ID      = var.telegram_chat_id
+    OBSERVABILITY_ENABLED = tostring(var.observability_enabled)
+    LOKI_URL              = var.loki_url
+    LOKI_USER             = var.loki_user
+    PROMETHEUS_URL        = var.prometheus_url
+    PROMETHEUS_USER       = var.prometheus_user
+    AGENT_STREAM          = tostring(var.agent_stream)
+    BRANCH                = var.branch
+    DASHBOARD_URL         = var.dashboard_url
   }
   env_content    = join("\n", [for k, v in local.env_map : "${k}=${v}"])
   config_content = join("\n", [for k, v in local.config_map : "${k}=${v}"])

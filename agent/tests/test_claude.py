@@ -88,3 +88,11 @@ def test_agent_session_never_sees_the_telegram_token():
     env = agent_env({"TELEGRAM_BOT_TOKEN": "123:abc", "TELEGRAM_CHAT_ID": "-1",
                      "HOME": "/h"})
     assert env == {"TELEGRAM_CHAT_ID": "-1", "HOME": "/h"}
+
+
+def test_agent_env_drops_grafana_cloud_token():
+    from blacksmith.claude import agent_env
+
+    env = agent_env({"GRAFANA_CLOUD_TOKEN": "glc_x", "HOME": "/h"})
+    assert "GRAFANA_CLOUD_TOKEN" not in env
+    assert env["HOME"] == "/h"

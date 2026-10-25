@@ -30,6 +30,15 @@ EXPECTED_VARIABLES = {
     "lifetime_hours",
     "telegram_bot_token",
     "telegram_chat_id",
+    "grafana_cloud_token",
+    "observability_enabled",
+    "loki_url",
+    "loki_user",
+    "prometheus_url",
+    "prometheus_user",
+    "agent_stream",
+    "branch",
+    "dashboard_url",
 }
 
 NETWORK_HINTS = (
@@ -182,3 +191,28 @@ def test_telegram_values_reach_the_droplet_files():
     # The token belongs in the 0600 env file, the chat id in the world-readable config.
     config_map = main.index("config_map = {")
     assert main.index("TELEGRAM_BOT_TOKEN") < config_map < main.index("TELEGRAM_CHAT_ID")
+
+
+def test_observability_values_reach_the_droplet_files():
+    main = (TF_DIR / "main.tf").read_text()
+    config_map = main.index("config_map = {")
+    assert re.search(r"GRAFANA_CLOUD_TOKEN\s*=\s*var\.grafana_cloud_token", main)
+    assert main.index("GRAFANA_CLOUD_TOKEN") < config_map
+    for key, var in (
+        ("OBSERVABILITY_ENABLED", "tostring(var.observability_enabled)"),
+        ("LOKI_URL", "var.loki_url"), ("LOKI_USER", "var.loki_user"),
+        ("PROMETHEUS_URL", "var.prometheus_url"), ("PROMETHEUS_USER", "var.prometheus_user"),
+        ("AGENT_STREAM", "tostring(var.agent_stream)"),
+        ("BRANCH", "var.branch"), ("DASHBOARD_URL", "var.dashboard_url"),
+    ):
+        m = re.search(rf"{key}\s*=\s*{re.escape(var)}", main)
+        assert m and m.start() > config_map, key
+
+
+def test_observability_variables_declared_with_defaults():
+    text = (TF_DIR / "variables.tf").read_text()
+    for name in ("grafana_cloud_token", "observability_enabled", "loki_url", "loki_user",
+                 "prometheus_url", "prometheus_user", "agent_stream", "branch", "dashboard_url"):
+        assert re.search(rf'variable "{name}"', text), name
+    block = text[text.index('variable "grafana_cloud_token"'):]
+    assert "sensitive   = true" in block.split("}", 1)[0]

@@ -31,3 +31,7 @@ def test_load_secret_values_skips_empty():
 
 def test_telegram_bot_token_is_a_secret():
     assert "TELEGRAM_BOT_TOKEN" in SECRET_KEYS
+
+
+def test_grafana_cloud_token_is_a_secret():
+    assert "GRAFANA_CLOUD_TOKEN" in SECRET_KEYS

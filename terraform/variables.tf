@@ -119,3 +119,58 @@ variable "lifetime_hours" {
     error_message = "lifetime_hours must be a whole number of at least 1."
   }
 }
+
+variable "grafana_cloud_token" {
+  description = "Grafana Cloud access policy token for pushing logs and metrics (GRAFANA_CLOUD_TOKEN on the droplet)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "observability_enabled" {
+  description = "Ship droplet logs and metrics to Grafana Cloud (OBSERVABILITY_ENABLED on the droplet)."
+  type        = bool
+  default     = false
+}
+
+variable "loki_url" {
+  description = "Grafana Cloud Loki push URL (LOKI_URL on the droplet)."
+  type        = string
+  default     = ""
+}
+
+variable "loki_user" {
+  description = "Grafana Cloud Loki user id (LOKI_USER on the droplet)."
+  type        = string
+  default     = ""
+}
+
+variable "prometheus_url" {
+  description = "Grafana Cloud Prometheus remote-write URL (PROMETHEUS_URL on the droplet)."
+  type        = string
+  default     = ""
+}
+
+variable "prometheus_user" {
+  description = "Grafana Cloud Prometheus user id (PROMETHEUS_USER on the droplet)."
+  type        = string
+  default     = ""
+}
+
+variable "agent_stream" {
+  description = "Stream the agent session output as it runs (AGENT_STREAM on the droplet)."
+  type        = bool
+  default     = true
+}
+
+variable "branch" {
+  description = "Branch the agent works on (BRANCH on the droplet)."
+  type        = string
+  default     = ""
+}
+
+variable "dashboard_url" {
+  description = "Grafana dashboard URL for this run (DASHBOARD_URL on the droplet)."
+  type        = string
+  default     = ""
+}

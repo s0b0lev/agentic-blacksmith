@@ -51,6 +51,19 @@ def _percent(title: str, ds: dict, expr: str, grid: tuple[int, int, int, int]) -
                                "overrides": []})
 
 
+def _number_panels(panels: list[dict], start: int = 1) -> int:
+    """Give every panel (rows and their children included) a unique integer ``id``.
+
+    Externally shared dashboards query panels by id; a panel without one renders empty.
+    """
+    next_id = start
+    for panel in panels:
+        panel["id"] = next_id
+        next_id += 1
+        next_id = _number_panels(panel.get("panels", []), next_id)
+    return next_id
+
+
 def build_dashboard(repo: str, issue: int, branch: str, *, loki_uid: str, prom_uid: str,
                     agent_stream: bool, metrics: bool) -> dict:
     """The dashboard model; every query is pinned to this repo and issue."""
@@ -99,6 +112,7 @@ def build_dashboard(repo: str, issue: int, branch: str, *, loki_uid: str, prom_u
         "panels": [_logs("Journal and bootstrap", loki, f'{{{sel}, job=~"journal|bootstrap"}}',
                          (0, y + 1, 24, 10), False)],
     })
+    _number_panels(panels)
     return {
         "uid": dashboard_uid(repo, issue),
         "title": f"blacksmith {repo} #{issue}",

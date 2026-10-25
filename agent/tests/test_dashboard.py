@@ -159,3 +159,17 @@ def test_runner_events_stat_reads_zero_when_quiet():
 
 def test_repr_hides_the_token():
     assert "secret-token" not in repr(Grafana("https://g.example", "secret-token"))
+
+
+def test_every_panel_has_a_unique_integer_id_for_public_queries():
+    d = build_dashboard("acme/shop", 12, "b", loki_uid="L", prom_uid="P", agent_stream=True, metrics=True)
+    ids = []
+
+    def walk(panels):
+        for p in panels:
+            ids.append(p.get("id"))
+            walk(p.get("panels", []))
+
+    walk(d["panels"])
+    assert ids and all(isinstance(i, int) for i in ids)
+    assert len(ids) == len(set(ids))

@@ -70,19 +70,31 @@ def test_upsert_dashboard_overwrites_and_returns_uid():
     assert headers["Authorization"] == "Bearer sa-token"
 
 
-def test_share_public_creates_share():
-    http = FakeHttp([(200, {"accessToken": "abc123", "uid": "pd1"})])
+SHARES = "https://g.example/api/dashboards/uid/bs-12-abc/public-dashboards/"
+
+
+def test_share_public_creates_share_when_none_exists():
+    http = FakeHttp([(404, {"message": "not found"}), (200, {"accessToken": "abc123", "uid": "pd1"})])
     assert Grafana("https://g.example", "t", http).share_public("bs-12-abc") == "abc123"
-    method, url, body, _ = http.calls[0]
-    assert (method, url) == ("POST", "https://g.example/api/dashboards/uid/bs-12-abc/public-dashboards/")
+    assert http.calls[0][:2] == ("GET", SHARES)
+    method, url, body, _ = http.calls[1]
+    assert (method, url) == ("POST", SHARES)
     assert body == {"isEnabled": True, "share": "public", "timeSelectionEnabled": True}
 
 
-def test_share_public_reuses_existing_share_on_400():
-    http = FakeHttp([(400, {"message": "dashboard is already public"}),
-                     (200, {"accessToken": "existing", "uid": "pd1", "isEnabled": True})])
+def test_share_public_reuses_an_enabled_share_without_posting():
+    http = FakeHttp([(200, {"accessToken": "existing", "uid": "pd1", "isEnabled": True})])
     assert Grafana("https://g.example", "t", http).share_public("bs-12-abc") == "existing"
-    assert http.calls[1][:2] == ("GET", "https://g.example/api/dashboards/uid/bs-12-abc/public-dashboards/")
+    assert [c[:2] for c in http.calls] == [("GET", SHARES)]
+
+
+def test_share_public_replaces_a_disabled_share():
+    http = FakeHttp([(200, {"accessToken": "old", "uid": "pd1", "isEnabled": False}),
+                     (200, {}),
+                     (200, {"accessToken": "new", "uid": "pd2", "isEnabled": True})])
+    assert Grafana("https://g.example", "t", http).share_public("bs-12-abc") == "new"
+    assert [c[:2] for c in http.calls] == [
+        ("GET", SHARES), ("DELETE", SHARES + "pd1"), ("POST", SHARES)]
 
 
 def test_unshare_removes_existing_share():
@@ -111,6 +123,8 @@ def test_agent_stream_extracts_content_fields_with_explicit_json_paths():
     (panel,) = [p for p in d["panels"] if p["title"] == "Agent stream"]
     expr = panel["targets"][0]["expr"]
     assert "message.content[0].type" in expr and "message_content_0" not in expr
+    assert 'input="message.content[0].input"' in expr
+    assert "{{ .input | trunc 200 }}" in expr
 
 
 def test_upsert_without_uid_in_response_raises_grafana_error():
@@ -120,12 +134,27 @@ def test_upsert_without_uid_in_response_raises_grafana_error():
     assert "/api/dashboards/db" in str(exc.value) and "secret-token" not in str(exc.value)
 
 
-def test_share_400_without_existing_share_keeps_the_original_message():
-    http = FakeHttp([(400, {"message": "public dashboards are disabled"}), (200, {})])
+def test_share_post_error_carries_the_message_not_the_token():
+    http = FakeHttp([(404, {"message": "not found"}),
+                     (400, {"message": "public dashboards are disabled"})])
     with pytest.raises(GrafanaError) as exc:
         Grafana("https://g.example", "secret-token", http).share_public("bs-12-abc")
     assert "400" in str(exc.value) and "public dashboards are disabled" in str(exc.value)
     assert "secret-token" not in str(exc.value)
+
+
+def test_share_get_error_other_than_404_raises():
+    http = FakeHttp([(500, {"message": "boom"})])
+    with pytest.raises(GrafanaError) as exc:
+        Grafana("https://g.example", "secret-token", http).share_public("bs-12-abc")
+    assert "500" in str(exc.value) and "secret-token" not in str(exc.value)
+
+
+def test_runner_events_stat_reads_zero_when_quiet():
+    d = build_dashboard("acme/shop", 12, "b", loki_uid="L", prom_uid="P", agent_stream=True, metrics=True)
+    (panel,) = [p for p in d["panels"] if p["title"] == "Runner events, last 10 min"]
+    assert panel["type"] == "stat"
+    assert panel["fieldConfig"]["defaults"]["noValue"] == "0"
 
 
 def test_repr_hides_the_token():

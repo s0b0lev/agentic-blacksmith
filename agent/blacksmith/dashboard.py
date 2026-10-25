@@ -72,8 +72,10 @@ def build_dashboard(repo: str, issue: int, branch: str, *, loki_uid: str, prom_u
                      f' / sum(node_filesystem_size_bytes{{{sel}, mountpoint="/"}}))',
                      (12, 0, 6, 4)),
         ]
+    # noValue: a quiet runner reads 0 (the "stuck" signal), not "No data".
     panels.append(_panel("stat", "Runner events, last 10 min", loki,
-                         f'sum(count_over_time({{{sel}, job="runner"}}[10m]))', (18, 0, 6, 4)))
+                         f'sum(count_over_time({{{sel}, job="runner"}}[10m]))', (18, 0, 6, 4),
+                         fieldConfig={"defaults": {"noValue": "0"}, "overrides": []}))
     y = 4
     panels.append(_logs("Runner events", loki, f'{{{sel}, job="runner"}}', (0, y, 24, 10), False))
     y += 10
@@ -82,8 +84,9 @@ def build_dashboard(repo: str, issue: int, branch: str, *, loki_uid: str, prom_u
             "Agent stream", loki,
             # A bare `| json` skips arrays, so content[0] needs explicit expressions.
             f'{{{sel}, job="agent"}} | json type="type", kind="message.content[0].type", '
-            'name="message.content[0].name", text="message.content[0].text" '
-            '| line_format "{{.type}} {{.kind}} {{.name}} {{.text}}"',
+            'name="message.content[0].name", text="message.content[0].text", '
+            'input="message.content[0].input" '
+            '| line_format "{{.type}} {{.kind}} {{.name}} {{.text}} {{ .input | trunc 200 }}"',
             (0, y, 24, 12), True))
         y += 12
     panels.append(_logs("Containers", loki, f'{{{sel}, job="docker"}}', (0, y, 24, 10), False))
@@ -136,7 +139,7 @@ def _urllib_http(method: str, url: str, body: bytes | None,
         with urllib.request.urlopen(request, timeout=TIMEOUT_S) as resp:
             return resp.status, resp.read()
     except urllib.error.HTTPError as exc:
-        # 4xx/5xx are data to the client (400 = already shared, 404 = already gone).
+        # 4xx/5xx are data to the client (404 = not shared yet, or already gone).
         return exc.code, exc.read()
 
 
@@ -196,18 +199,16 @@ class Grafana:
         return f"/api/dashboards/uid/{uid}/public-dashboards/"
 
     def share_public(self, uid: str) -> str:
-        body = {"isEnabled": True, "share": "public", "timeSelectionEnabled": True}
+        """The access token of an enabled public share, reusing or replacing an existing one."""
         path = self._shares(uid)
-        try:
-            payload = self._request("POST", path, body)
-        except _StatusError as exc:
-            if exc.status != 400:
-                raise
-            # 400 usually means "already shared": reuse the existing share, else report the 400.
-            existing = self._request("GET", path)
-            if not existing.get("accessToken"):
-                raise exc from None
+        existing = self._tolerate(404, "GET", path) or {}
+        if existing.get("accessToken") and existing.get("isEnabled") is True:
             return existing["accessToken"]
+        if existing.get("uid"):
+            # A disabled share would hand out a link that shows nothing: replace it.
+            self._tolerate(404, "DELETE", path + existing["uid"])
+        body = {"isEnabled": True, "share": "public", "timeSelectionEnabled": True}
+        payload = self._request("POST", path, body)
         return _require(payload, "accessToken", "POST", path)
 
     def unshare(self, uid: str) -> None:

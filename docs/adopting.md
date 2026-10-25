@@ -519,7 +519,9 @@ run: if Alloy cannot be set up, bootstrap logs a warning and continues.
   blocks containers from reaching it with an `iptables` rule in the `DOCKER-USER` chain, but
   anything that gets a shell on the host can still read it.
 - Changing any token (rotating a secret) changes the droplet's user data, so the next
-  spin-up for an issue that already has a droplet replaces that droplet.
+  spin-up for an issue that already has a droplet replaces that droplet. Enabling or
+  disabling observability, or changing any of its values, also changes the user data and
+  replaces an issue's droplet at the next spin-up.
 
 ## 12. Images your compose file can no longer pull
 

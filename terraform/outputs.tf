@@ -28,3 +28,8 @@ output "ssh_command" {
   description = "How to SSH into the droplet from this Terraform workspace."
   value       = "ssh -i <(terraform output -raw ssh_private_key) root@${digitalocean_droplet.this.ipv4_address}"
 }
+
+output "dashboard_url" {
+  description = "Grafana dashboard URL passed to this droplet; spin-up keeps it when a new create fails."
+  value       = var.dashboard_url
+}

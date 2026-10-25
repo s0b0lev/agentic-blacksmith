@@ -234,47 +234,6 @@ jobs:
           fi
           echo "BASE_BRANCH=$base" >> "$GITHUB_ENV"
 
-      - name: Grafana dashboard
-        # Best effort: a missing token or a Grafana error leaves DASHBOARD_URL empty and the
-        # run continues without a dashboard link.
-        id: dashboard
-        if: steps.check.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
-          GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
-        run: |
-          DASHBOARD_URL=""
-          if [ "$OBS_ENABLED" != true ]; then
-            echo "::notice::observability is disabled in $CONFIG_PATH; no Grafana dashboard"
-          elif [ -z "$GRAFANA_URL" ]; then
-            echo "::notice::observability.grafana_url is empty in $CONFIG_PATH; no Grafana dashboard"
-          elif [ -z "$GRAFANA_API_TOKEN" ]; then
-            echo "::notice::GRAFANA_API_TOKEN is not set; no Grafana dashboard"
-          else
-            public="$OBS_PUBLIC"
-            if [ "$public" = auto ]; then
-              if private="$(gh api "repos/$REPO" --jq .private)"; then
-                if [ "$private" = false ]; then public=true; else public=false; fi
-              else
-                echo "::warning::cannot read the visibility of $REPO; keeping the dashboard private"
-                public=false
-              fi
-            fi
-            metrics=false
-            if [ -n "$PROM_URL" ]; then metrics=true; fi
-            rc=0
-            url="$(PYTHONPATH=template/agent python3 -m blacksmith dashboard create \
-              --grafana-url "$GRAFANA_URL" --repo "$REPO" --issue "$ISSUE" --branch "$BRANCH" \
-              --public "$public" --loki-uid "$LOKI_DS_UID" --prom-uid "$PROM_DS_UID" \
-              --agent-stream "$AGENT_STREAM" --metrics "$metrics")" || rc=$?
-            if [ "$rc" -eq 0 ] && [ -n "$url" ]; then
-              DASHBOARD_URL="$url"
-            else
-              echo "::warning::Grafana dashboard not created: dashboard create exited $rc (see the log above)"
-            fi
-          fi
-          echo "DASHBOARD_URL=$DASHBOARD_URL" >> "$GITHUB_ENV"
-
       - name: Set up Terraform
         if: steps.check.outputs.skip != 'true'
         uses: hashicorp/setup-terraform@v3
@@ -311,6 +270,61 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
         run: terraform workspace select -or-create "issue-$ISSUE"
+
+      - name: Grafana dashboard
+        # Best effort: a missing token or a disabled feature leaves DASHBOARD_URL empty and the
+        # run continues without a dashboard link. DASHBOARD_URL is part of the droplet's user
+        # data, so when creation fails the issue's previous link (a Terraform output of the
+        # workspace selected above) is kept; an empty value would replace a running droplet.
+        id: dashboard
+        if: steps.check.outputs.skip != 'true'
+        working-directory: template/terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+          GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
+          GRAFANA_CLOUD_TOKEN: ${{ secrets.GRAFANA_CLOUD_TOKEN }}
+        run: |
+          if [ "$OBS_ENABLED" = true ] && [ -z "$GRAFANA_CLOUD_TOKEN" ]; then
+            echo "::notice::observability.enabled is true but GRAFANA_CLOUD_TOKEN is not set; the droplet will not ship logs"
+          fi
+          DASHBOARD_URL=""
+          if [ "$OBS_ENABLED" != true ]; then
+            echo "::notice::observability is disabled in $CONFIG_PATH; no Grafana dashboard"
+          elif [ -z "$GRAFANA_URL" ]; then
+            echo "::notice::observability.grafana_url is empty in $CONFIG_PATH; no Grafana dashboard"
+          elif [ -z "$GRAFANA_API_TOKEN" ]; then
+            echo "::notice::GRAFANA_API_TOKEN is not set; no Grafana dashboard"
+          else
+            public="$OBS_PUBLIC"
+            if [ "$public" = auto ]; then
+              if private="$(gh api "repos/$REPO" --jq .private)"; then
+                if [ "$private" = false ]; then public=true; else public=false; fi
+              else
+                echo "::warning::cannot read the visibility of $REPO; keeping the dashboard private"
+                public=false
+              fi
+            fi
+            metrics=false
+            if [ -n "$PROM_URL" ]; then metrics=true; fi
+            rc=0
+            url="$(PYTHONPATH=../agent python3 -m blacksmith dashboard create \
+              --grafana-url "$GRAFANA_URL" --repo "$REPO" --issue "$ISSUE" --branch "$BRANCH" \
+              --public "$public" --loki-uid "$LOKI_DS_UID" --prom-uid "$PROM_DS_UID" \
+              --agent-stream "$AGENT_STREAM" --metrics "$metrics")" || rc=$?
+            if [ "$rc" -eq 0 ] && [ -n "$url" ]; then
+              DASHBOARD_URL="$url"
+            else
+              DASHBOARD_URL="$(terraform output -raw dashboard_url 2>/dev/null || true)"
+              if [ -n "$DASHBOARD_URL" ]; then
+                echo "::warning::Grafana dashboard not created: dashboard create exited $rc (see the log above); the previous dashboard link was kept: $DASHBOARD_URL"
+              else
+                echo "::warning::Grafana dashboard not created: dashboard create exited $rc (see the log above); no previous dashboard link to keep"
+              fi
+            fi
+          fi
+          echo "DASHBOARD_URL=$DASHBOARD_URL" >> "$GITHUB_ENV"
 
       - name: Terraform apply
         if: steps.check.outputs.skip != 'true'

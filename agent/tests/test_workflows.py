@@ -221,12 +221,36 @@ def test_spin_up_creates_dashboard_before_terraform_apply():
     names = [s.get("name") for s in steps]
     assert names.index("Grafana dashboard") < names.index("Terraform apply")
     assert names.index("Resolve base branch") < names.index("Grafana dashboard")
+    # After "Terraform workspace" so a failed create can keep the issue's previous link
+    # (DASHBOARD_URL is in the droplet user data; changing it would replace the droplet).
+    assert names.index("Terraform workspace") < names.index("Grafana dashboard")
     step = steps[names.index("Grafana dashboard")]
     assert step["env"]["GRAFANA_API_TOKEN"] == "${{ secrets.GRAFANA_API_TOKEN }}"
+    assert step["working-directory"] == "template/terraform"
+    assert step["env"]["AWS_ACCESS_KEY_ID"] == "${{ secrets.SPACES_ACCESS_KEY_ID }}"
+    assert step["env"]["AWS_SECRET_ACCESS_KEY"] == "${{ secrets.SPACES_SECRET_ACCESS_KEY }}"
+    assert "terraform output -raw dashboard_url" in step["run"]
+    assert "previous dashboard link" in step["run"]
     assert "python3 -m blacksmith dashboard create" in step["run"]
     assert "::warning::" in step["run"]
     assert "DASHBOARD_URL=" in step["run"]
     assert 'gh api "repos/$REPO" --jq .private' in step["run"]
+
+
+def test_terraform_outputs_the_dashboard_url():
+    text = (ROOT / "terraform" / "outputs.tf").read_text()
+    assert 'output "dashboard_url"' in text and "var.dashboard_url" in text
+
+
+def test_spin_up_notices_a_missing_push_token():
+    steps = _load(SPIN_UP)["jobs"]["spin-up"]["steps"]
+    step = {s.get("name"): s for s in steps}["Grafana dashboard"]
+    assert step["env"]["GRAFANA_CLOUD_TOKEN"] == "${{ secrets.GRAFANA_CLOUD_TOKEN }}"
+    run = step["run"]
+    assert 'if [ "$OBS_ENABLED" = true ] && [ -z "$GRAFANA_CLOUD_TOKEN" ]' in run
+    assert "::notice::observability.enabled is true but GRAFANA_CLOUD_TOKEN is not set" in run
+    # The token is only ever tested for emptiness, never printed.
+    assert not [ln for ln in run.splitlines() if "echo" in ln and "$GRAFANA_CLOUD_TOKEN" in ln]
 
 
 def test_spin_up_passes_observability_values_and_dashboard_url_to_terraform():

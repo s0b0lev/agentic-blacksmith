@@ -104,3 +104,29 @@ def test_errors_carry_status_and_path_not_token():
         Grafana("https://g.example", "secret-token", http).upsert_dashboard({"uid": "u"})
     assert "500" in str(exc.value) and "/api/dashboards/db" in str(exc.value)
     assert "secret-token" not in str(exc.value)
+
+
+def test_agent_stream_extracts_content_fields_with_explicit_json_paths():
+    d = build_dashboard("acme/shop", 12, "b", loki_uid="L", prom_uid="P", agent_stream=True, metrics=False)
+    (panel,) = [p for p in d["panels"] if p["title"] == "Agent stream"]
+    expr = panel["targets"][0]["expr"]
+    assert "message.content[0].type" in expr and "message_content_0" not in expr
+
+
+def test_upsert_without_uid_in_response_raises_grafana_error():
+    http = FakeHttp([(200, {})])
+    with pytest.raises(GrafanaError) as exc:
+        Grafana("https://g.example", "secret-token", http).upsert_dashboard({"uid": "u"})
+    assert "/api/dashboards/db" in str(exc.value) and "secret-token" not in str(exc.value)
+
+
+def test_share_400_without_existing_share_keeps_the_original_message():
+    http = FakeHttp([(400, {"message": "public dashboards are disabled"}), (200, {})])
+    with pytest.raises(GrafanaError) as exc:
+        Grafana("https://g.example", "secret-token", http).share_public("bs-12-abc")
+    assert "400" in str(exc.value) and "public dashboards are disabled" in str(exc.value)
+    assert "secret-token" not in str(exc.value)
+
+
+def test_repr_hides_the_token():
+    assert "secret-token" not in repr(Grafana("https://g.example", "secret-token"))

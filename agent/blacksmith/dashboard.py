@@ -7,7 +7,7 @@ import json
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 UID_MAX = 40  # Grafana's limit on a dashboard uid
 TIMEOUT_S = 30
@@ -80,9 +80,10 @@ def build_dashboard(repo: str, issue: int, branch: str, *, loki_uid: str, prom_u
     if agent_stream:
         panels.append(_logs(
             "Agent stream", loki,
-            f'{{{sel}, job="agent"}} | json | line_format "{{{{.type}}}} '
-            '{{.message_content_0_type}} {{.message_content_0_name}} '
-            '{{.message_content_0_text}}"',
+            # A bare `| json` skips arrays, so content[0] needs explicit expressions.
+            f'{{{sel}, job="agent"}} | json type="type", kind="message.content[0].type", '
+            'name="message.content[0].name", text="message.content[0].text" '
+            '| line_format "{{.type}} {{.kind}} {{.name}} {{.text}}"',
             (0, y, 24, 12), True))
         y += 12
     panels.append(_logs("Containers", loki, f'{{{sel}, job="docker"}}', (0, y, 24, 10), False))
@@ -152,7 +153,7 @@ def _message(raw: bytes) -> str:
 @dataclass(frozen=True)
 class Grafana:
     url: str
-    token: str
+    token: str = field(repr=False)
     http: Http = _urllib_http
 
     def _request(self, method: str, path: str, body: dict | None = None) -> dict:
@@ -189,17 +190,25 @@ class Grafana:
     def upsert_dashboard(self, dashboard: dict) -> str:
         payload = self._request("POST", "/api/dashboards/db",
                                 {"dashboard": dashboard, "overwrite": True})
-        return payload["uid"]
+        return _require(payload, "uid", "POST", "/api/dashboards/db")
 
     def _shares(self, uid: str) -> str:
         return f"/api/dashboards/uid/{uid}/public-dashboards/"
 
     def share_public(self, uid: str) -> str:
         body = {"isEnabled": True, "share": "public", "timeSelectionEnabled": True}
-        payload = self._tolerate(400, "POST", self._shares(uid), body)
-        if payload is None:  # already shared: reuse the existing share
-            payload = self._request("GET", self._shares(uid))
-        return payload["accessToken"]
+        path = self._shares(uid)
+        try:
+            payload = self._request("POST", path, body)
+        except _StatusError as exc:
+            if exc.status != 400:
+                raise
+            # 400 usually means "already shared": reuse the existing share, else report the 400.
+            existing = self._request("GET", path)
+            if not existing.get("accessToken"):
+                raise exc from None
+            return existing["accessToken"]
+        return _require(payload, "accessToken", "POST", path)
 
     def unshare(self, uid: str) -> None:
         existing = self._tolerate(404, "GET", self._shares(uid))
@@ -209,6 +218,13 @@ class Grafana:
 
     def delete_dashboard(self, uid: str) -> None:
         self._tolerate(404, "DELETE", f"/api/dashboards/uid/{uid}")
+
+
+def _require(payload: dict, key: str, method: str, path: str) -> str:
+    value = payload.get(key)
+    if not value:
+        raise GrafanaError(f"{method} {path} returned no {key}")
+    return value
 
 
 class _StatusError(GrafanaError):

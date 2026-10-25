@@ -381,3 +381,17 @@ def test_poll_passes_the_telegram_notifier(tmp_path, capsys, monkeypatch):
     _telegram_env(monkeypatch)
     assert main(["--config-file", str(path), "poll"]) == 0
     assert seen["notifier"].chat_id == "-1001"
+
+
+def test_alloy_config_command(tmp_path):
+    env = tmp_path / "env"; env.write_text("GRAFANA_CLOUD_TOKEN=glc_abcdefgh\n")
+    conf = tmp_path / "config"
+    conf.write_text("OBSERVABILITY_ENABLED=true\nLOKI_URL=https://l\nLOKI_USER=1\nPROMETHEUS_URL=\n"
+                    "PROMETHEUS_USER=\nAGENT_STREAM=true\nREPO=acme/shop\nISSUE=12\nBRANCH=b\n")
+    out = subprocess.run([sys.executable, "-m", "blacksmith", "alloy-config", "--env", str(env),
+                          "--runner-config", str(conf)], capture_output=True, text=True, cwd=AGENT_DIR)
+    assert out.returncode == 0 and 'job = "runner"' in out.stdout
+    conf.write_text(conf.read_text().replace("OBSERVABILITY_ENABLED=true", "OBSERVABILITY_ENABLED=false"))
+    out = subprocess.run([sys.executable, "-m", "blacksmith", "alloy-config", "--env", str(env),
+                          "--runner-config", str(conf)], capture_output=True, text=True, cwd=AGENT_DIR)
+    assert out.returncode == 3 and "observability disabled" in out.stderr

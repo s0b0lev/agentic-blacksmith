@@ -229,11 +229,25 @@ def _cmd_fetch_issue(conf: dict[str, str], args) -> int:
     return 0
 
 
+def _cmd_alloy_config(conf: dict[str, str], args) -> int:
+    from blacksmith.observability import render_alloy_config, settings_from_files
+
+    settings = settings_from_files(read_config_file(args.runner_config),
+                                   read_config_file(args.env))
+    if settings is None:
+        print("observability disabled", file=sys.stderr)
+        return 3
+    sys.stdout.write(render_alloy_config(settings))
+    return 0
+
+
 # Commands that run before bootstrap has written the full runner config: they get the
 # parsed arguments instead of a RunContext.
 EARLY_COMMANDS = {
     "config": (_cmd_config, "print a blacksmith.yml value by dotted key"),
     "fetch-issue": (_cmd_fetch_issue, "write .blacksmith/issue.md from the GitHub issue"),
+    "alloy-config": (_cmd_alloy_config,
+                     "print the Alloy config for this droplet from /etc/blacksmith/{env,config}"),
 }
 
 COMMANDS = {
@@ -259,12 +273,19 @@ def main(argv: list[str] | None = None) -> int:
     cfg_parser.add_argument("--config", type=Path, default=None,
                             help="blacksmith.yml path (default REPO_ROOT/CONFIG_PATH)")
     sub.add_parser("fetch-issue", help=EARLY_COMMANDS["fetch-issue"][1])
+    alloy_parser = sub.add_parser("alloy-config", help=EARLY_COMMANDS["alloy-config"][1])
+    alloy_parser.add_argument("--env", type=Path, default=Path("/etc/blacksmith/env"),
+                              help="secrets env file (default /etc/blacksmith/env)")
+    alloy_parser.add_argument("--runner-config", type=Path, default=Path(DEFAULT_CONFIG_FILE),
+                              help=f"KEY=value runner config (default {DEFAULT_CONFIG_FILE})")
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
         return 0
     if args.command in EARLY_COMMANDS:
-        early = args.command == "config" and args.config is not None
+        # These read their own files and never need the default runner config.
+        early = (args.command == "config" and args.config is not None) \
+            or args.command == "alloy-config"
         conf = {} if early else read_config_file(args.config_file)
         return EARLY_COMMANDS[args.command][0](conf, args)
     conf = read_config_file(args.config_file)

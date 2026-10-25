@@ -182,6 +182,15 @@ def test_observability_enabled_requires_loki():
     assert any(line.startswith("observability.loki_user:") for line in lines)
 
 
+def test_observability_prometheus_url_requires_prometheus_user():
+    data = minimal()
+    data["observability"] = {"prometheus_url": "https://prom.example/api/prom/push"}
+    with pytest.raises(ConfigError, match=r"observability\.prometheus_user: missing"):
+        parse_config(data)
+    data["observability"]["prometheus_user"] = "123"
+    assert parse_config(data).observability.prometheus_user == "123"
+
+
 @pytest.mark.parametrize("key", ["loki_url", "prometheus_url", "grafana_url"])
 def test_observability_urls_must_be_https(key):
     data = minimal()

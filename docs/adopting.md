@@ -456,7 +456,8 @@ a run that is stuck. The free tier of Grafana Cloud is enough.
 1. Create a free stack at grafana.com.
 2. Copy the push URLs and numeric user ids for logs and metrics: in your stack open
    Connections → Add new connection → "Hosted logs" (Loki) and "Hosted Prometheus metrics".
-   Each page shows a URL and a user (a number). Omit the Prometheus pair to ship logs only.
+   Each page shows a URL and a user (a number). Omit the Prometheus pair to ship logs only;
+   `prometheus_url` without `prometheus_user` is a config error.
 3. Create an access-policy token: grafana.com → My Account → Security → Access Policies →
    Create access policy with the scopes `logs:write` and `metrics:write`, then Add token.
    Store it as the secret `GRAFANA_CLOUD_TOKEN`. It travels to the droplet, where Alloy uses
@@ -471,7 +472,8 @@ a run that is stuck. The free tier of Grafana Cloud is enough.
    `grafanacloud-prom`; set `loki_datasource_uid` and `prometheus_datasource_uid` only if
    yours differ.
 6. Add the `observability:` section to `blacksmith.yml` (copy it from
-   [examples/sample-shop/blacksmith.yml](../examples/sample-shop/blacksmith.yml)) and set
+   [examples/sample-shop/blacksmith.yml](../examples/sample-shop/blacksmith.yml)), replace
+   the placeholder URLs and user ids in the copied block with the values from step 2, and set
    `enabled: true`. `grafana_url` is your stack URL; the dashboard and its links exist only
    when it is set.
 7. Make sure the two secrets from steps 3 and 4 are set (step 7 lists them). The workflow
@@ -518,6 +520,9 @@ run: if Alloy cannot be set up, bootstrap logs a warning and continues.
   (`169.254.169.254/metadata/v1/user-data`) serves the user data with the tokens; bootstrap
   blocks containers from reaching it with an `iptables` rule in the `DOCKER-USER` chain, but
   anything that gets a shell on the host can still read it.
+- With observability on, Alloy's local HTTP UI on `127.0.0.1:12345` exposes its component
+  arguments, including the redaction pattern built from the secret values, to any local
+  user, the same way the env file already exposes them.
 - Changing any token (rotating a secret) changes the droplet's user data, so the next
   spin-up for an issue that already has a droplet replaces that droplet. Enabling or
   disabling observability, or changing any of its values, also changes the user data and

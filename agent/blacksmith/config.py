@@ -292,6 +292,8 @@ def _observability(ctx: _Ctx, raw: Any) -> Observability:
         for key in ("loki_url", "loki_user"):
             if not text[key]:
                 ctx.err(f"observability.{key}", "missing")
+    if text["prometheus_url"] and not text["prometheus_user"]:
+        ctx.err("observability.prometheus_user", "missing")
     for key in ("loki_url", "prometheus_url", "grafana_url"):
         if text[key] and not text[key].startswith("https://"):
             ctx.err(f"observability.{key}", "must start with https://")

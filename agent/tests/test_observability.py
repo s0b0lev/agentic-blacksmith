@@ -67,6 +67,7 @@ def test_agent_lines_are_truncated_not_dropped():
     assert "stage.template" in text and "stage.output" in text
     assert str(MAX_LINE_BYTES) in text
     assert "longer_than" not in text
+    assert "substr 0 250000 .Entry" in text and "slice .Entry" not in text  # Sprig slice wants lists
 
 
 def test_metrics_keep_list_limits_series():
@@ -91,3 +92,35 @@ def test_rendered_config_validates_with_alloy(tmp_path):
     if "Unable to find image" in res.stderr and res.returncode != 0 and "pull" in res.stderr.lower():
         pytest.skip("docker cannot pull grafana/alloy")
     assert res.returncode == 0, res.stdout + res.stderr
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker is not installed")
+def test_truncation_stages_cut_long_lines_at_runtime(tmp_path):
+    import json
+    import re
+
+    from blacksmith.observability import truncation_stages
+
+    (tmp_path / "in.log").write_text("a" * 300_000 + "\nshort line\n")
+    (tmp_path / "config.alloy").write_text(
+        'local.file_match "f" {\n  path_targets = [{ __path__ = "/data/in.log" }]\n'
+        '  sync_period = "1s"\n}\n'
+        'loki.source.file "f" {\n  targets    = local.file_match.f.targets\n'
+        '  forward_to = [loki.process.t.receiver]\n}\n'
+        'loki.process "t" {\n' + truncation_stages() +
+        '  forward_to = [loki.echo.out.receiver]\n}\n'
+        'loki.echo "out" { }\n')
+    res = subprocess.run(
+        ["docker", "run", "--rm", "-v", f"{tmp_path}:/data", "--entrypoint", "timeout",
+         "grafana/alloy:latest", "15", "/bin/alloy", "run", "--storage.path=/tmp/alloy",
+         "/data/config.alloy"],
+        capture_output=True, text=True, timeout=600,
+    )
+    if "Unable to find image" in res.stderr and "pull" in res.stderr.lower():
+        pytest.skip("docker cannot pull grafana/alloy")
+    # loki.echo logs logfmt: values with spaces are Go-quoted, plain ones are bare.
+    raw = re.findall(r'entry=("(?:[^"\\]|\\.)*"|\S+)', res.stdout + res.stderr)
+    entries = [json.loads(e) if e.startswith('"') else e for e in raw]
+    assert "short line" in entries, (res.stdout + res.stderr)[-2000:]
+    long = [e for e in entries if e.startswith("aaaa")]
+    assert long == ["a" * 250_000 + " …[truncated]"], [len(e) for e in long]

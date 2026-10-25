@@ -67,6 +67,20 @@ def _common_labels(s: AlloySettings) -> str:
             f"branch = {_alloy_string(s.branch)} }}")
 
 
+def truncation_stages() -> str:
+    """The loki.process stage pair that cuts a line to MAX_LINE_BYTES instead of dropping it."""
+    template = (f"{{{{ if gt (len .Entry) {MAX_LINE_BYTES} }}}}"
+                f"{{{{ substr 0 {MAX_LINE_BYTES} .Entry }}}} …[truncated]"
+                "{{ else }}{{ .Entry }}{{ end }}")
+    return ("  stage.template {\n"
+            '    source   = "truncated"\n'
+            f"    template = {_alloy_string(template)}\n"
+            "  }\n"
+            "  stage.output {\n"
+            '    source = "truncated"\n'
+            "  }\n")
+
+
 def _logs(s: AlloySettings) -> str:
     targets = [
         '    { __path__ = "/home/blacksmith/repo/.blacksmith/log.md", job = "runner" },',
@@ -74,9 +88,6 @@ def _logs(s: AlloySettings) -> str:
     ]
     if s.agent_stream:
         targets.append('    { __path__ = "/home/blacksmith/.claude/projects/*/*.jsonl", job = "agent" },')
-    truncate = (f"{{{{ if gt (len .Entry) {MAX_LINE_BYTES} }}}}"
-                f"{{{{ slice .Entry 0 {MAX_LINE_BYTES} }}}} …[truncated]"
-                "{{ else }}{{ .Entry }}{{ end }}")
     pattern = redaction_pattern(s.secrets)
     replace = (f'  stage.replace {{\n    expression = "({pattern})"\n'
                '    replace    = "<redacted>"\n  }\n') if pattern else ""
@@ -148,14 +159,7 @@ loki.source.docker "docker" {{
 
 // ---- truncate, redact secrets, add common labels, ship -------------------------------
 loki.process "scrub" {{
-  stage.template {{
-    source   = "truncated"
-    template = {_alloy_string(truncate)}
-  }}
-  stage.output {{
-    source = "truncated"
-  }}
-{replace}  stage.static_labels {{
+{truncation_stages()}{replace}  stage.static_labels {{
     values = {_common_labels(s)}
   }}
   forward_to = [loki.write.cloud.receiver]

@@ -139,6 +139,7 @@ def test_observability_renders_config_and_runs_alloy_as_root():
     assert "alloy.service.d/override.conf" in func and "User=root" in func
     assert "systemctl enable --now alloy" in func
     assert "apt.grafana.com" in func
+    assert "curl -fsSL --retry 3 https://apt.grafana.com/gpg.key" in func
 
 
 def test_observability_validates_before_install_and_keeps_diagnostics_out_of_log():

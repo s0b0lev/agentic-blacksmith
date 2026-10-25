@@ -120,7 +120,7 @@ log "bootstrap for $REPO#$ISSUE (base $BASE_BRANCH, config $CONFIG_PATH)"
 setup_observability() {
   local rendered out loki_url loki_user prom_url prom_user token
   if ! command -v alloy >/dev/null; then
-    curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/grafana.gpg \
+    curl -fsSL --retry 3 https://apt.grafana.com/gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/grafana.gpg \
       || return 1
     echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
       > /etc/apt/sources.list.d/grafana.list || return 1

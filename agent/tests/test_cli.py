@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -395,3 +396,28 @@ def test_alloy_config_command(tmp_path):
     out = subprocess.run([sys.executable, "-m", "blacksmith", "alloy-config", "--env", str(env),
                           "--runner-config", str(conf)], capture_output=True, text=True, cwd=AGENT_DIR)
     assert out.returncode == 3 and "observability disabled" in out.stderr
+
+
+def test_dashboard_command_requires_token(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k != "GRAFANA_API_TOKEN"}
+    out = subprocess.run([sys.executable, "-m", "blacksmith", "dashboard", "delete",
+                          "--grafana-url", "https://g.example", "--repo", "a/b", "--issue", "1"],
+                         capture_output=True, text=True, cwd=AGENT_DIR, env=env)
+    assert out.returncode == 2 and "GRAFANA_API_TOKEN" in out.stderr
+
+
+def test_dashboard_create_prints_link(monkeypatch, capsys):
+    from blacksmith import __main__ as cli
+
+    class FakeGrafana:
+        def __init__(self, url, token): self.url = url
+        def upsert_dashboard(self, d): return d["uid"]
+        def share_public(self, uid): return "tok"
+        def unshare(self, uid): raise AssertionError("not called when public")
+    monkeypatch.setenv("GRAFANA_API_TOKEN", "t")
+    monkeypatch.setattr("blacksmith.dashboard.Grafana", FakeGrafana)
+    code = cli.main(["dashboard", "create", "--grafana-url", "https://g.example", "--repo", "a/b",
+                     "--issue", "1", "--branch", "b", "--public", "true", "--loki-uid", "L",
+                     "--prom-uid", "P", "--agent-stream", "true", "--metrics", "false"])
+    assert code == 0
+    assert capsys.readouterr().out.strip() == "https://g.example/public-dashboards/tok"

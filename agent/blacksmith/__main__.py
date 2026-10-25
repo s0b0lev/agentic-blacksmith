@@ -241,6 +241,41 @@ def _cmd_alloy_config(conf: dict[str, str], args) -> int:
     return 0
 
 
+def _cmd_dashboard(conf: dict[str, str], args) -> int:
+    from blacksmith import dashboard
+
+    token = os.environ.get("GRAFANA_API_TOKEN", "").strip()
+    if not token:
+        print("GRAFANA_API_TOKEN is not set", file=sys.stderr)
+        return 2
+    grafana = dashboard.Grafana(args.grafana_url, token)
+    uid = dashboard.dashboard_uid(args.repo, args.issue)
+    try:
+        if args.action == "delete":
+            grafana.delete_dashboard(uid)
+            return 0
+        model = dashboard.build_dashboard(
+            args.repo, args.issue, args.branch, loki_uid=args.loki_uid, prom_uid=args.prom_uid,
+            agent_stream=args.agent_stream, metrics=args.metrics)
+        uid = grafana.upsert_dashboard(model)
+        access_token = None
+        if args.public:
+            access_token = grafana.share_public(uid)
+        else:
+            grafana.unshare(uid)
+    except dashboard.GrafanaError as exc:
+        print(f"grafana: {exc}", file=sys.stderr)
+        return 1
+    print(dashboard.dashboard_link(args.grafana_url, uid, access_token))
+    return 0
+
+
+def _flag(value: str) -> bool:
+    if value not in ("true", "false"):
+        raise argparse.ArgumentTypeError(f"expected true or false, got {value!r}")
+    return value == "true"
+
+
 # Commands that run before bootstrap has written the full runner config: they get the
 # parsed arguments instead of a RunContext.
 EARLY_COMMANDS = {
@@ -248,6 +283,7 @@ EARLY_COMMANDS = {
     "fetch-issue": (_cmd_fetch_issue, "write .blacksmith/issue.md from the GitHub issue"),
     "alloy-config": (_cmd_alloy_config,
                      "print the Alloy config for this droplet from /etc/blacksmith/{env,config}"),
+    "dashboard": (_cmd_dashboard, "create or delete the issue's Grafana dashboard"),
 }
 
 COMMANDS = {
@@ -278,6 +314,20 @@ def main(argv: list[str] | None = None) -> int:
                               help="secrets env file (default /etc/blacksmith/env)")
     alloy_parser.add_argument("--runner-config", type=Path, default=Path(DEFAULT_CONFIG_FILE),
                               help=f"KEY=value runner config (default {DEFAULT_CONFIG_FILE})")
+    dash_parser = sub.add_parser("dashboard", help=EARLY_COMMANDS["dashboard"][1])
+    dash_sub = dash_parser.add_subparsers(dest="action", required=True)
+    for action in ("create", "delete"):
+        p = dash_sub.add_parser(action)
+        p.add_argument("--grafana-url", type=str, required=True)
+        p.add_argument("--repo", type=str, required=True)
+        p.add_argument("--issue", type=int, required=True)
+        if action == "create":
+            p.add_argument("--branch", type=str, required=True)
+            p.add_argument("--public", type=_flag, required=True)
+            p.add_argument("--loki-uid", type=str, required=True)
+            p.add_argument("--prom-uid", type=str, required=True)
+            p.add_argument("--agent-stream", type=_flag, required=True)
+            p.add_argument("--metrics", type=_flag, required=True)
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
@@ -285,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in EARLY_COMMANDS:
         # These read their own files and never need the default runner config.
         early = (args.command == "config" and args.config is not None) \
-            or args.command == "alloy-config"
+            or args.command in ("alloy-config", "dashboard")
         conf = {} if early else read_config_file(args.config_file)
         return EARLY_COMMANDS[args.command][0](conf, args)
     conf = read_config_file(args.config_file)

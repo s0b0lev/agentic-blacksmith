@@ -18,9 +18,9 @@ and nothing stays running after the work is done.
 label "blacksmith" on an issue
   -> adopter workflow (.github/workflows/blacksmith.yml in your repo)
   -> reusable spin-up workflow (this repo)
+  -> Grafana dashboard per issue (optional): logs and metrics from boot
   -> terraform apply: one droplet, firewall, SSH key, optional DNS record
   -> droplet bootstrap: Docker, Node, uv, Claude Code, clone, your setup commands
-  -> Grafana dashboard per issue (optional): logs and metrics from boot
   -> stages: plan -> build -> preview -> verify -> design -> pr
   -> pull request with preview URL, login and screenshots
   -> review rounds: new PR comments -> agent replies and pushes -> preview redeploys

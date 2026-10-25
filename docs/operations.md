@@ -58,7 +58,7 @@ Look in this order. Most questions are answered by the first four.
 If bootstrap failed, the issue gets a "Blacksmith bootstrap failed at step N (name)" comment,
 and `/var/log/blacksmith-bootstrap.log` ends with `bootstrap failed (exit N) at step N (name)`,
 usually after a `FATAL:` line. The most common causes are a failing `setup` command and an
-invalid `CLAUDE_CODE_OAUTH_TOKEN` (bootstrap runs a one-turn Claude smoke test in step 3). The
+invalid `CLAUDE_CODE_OAUTH_TOKEN` (bootstrap runs a one-turn Claude smoke test in step 4). The
 lifetime timer is installed before anything that can fail, so a failed droplet still destroys
 itself after `limits.lifetime_hours`; send the self-destruct event (below) to remove it sooner.
 
@@ -82,8 +82,9 @@ journalctl -u alloy -f
 cat /etc/alloy/config.alloy
 ```
 
-- `/etc/alloy/config.alloy` is the rendered config. Re-render it from the repository with
-  `python3 -m blacksmith alloy-config`, then `systemctl restart alloy`.
+- `/etc/alloy/config.alloy` is the rendered config. Re-render it on the droplet with
+  `PYTHONPATH=/opt/blacksmith/agent python3 -P -m blacksmith alloy-config > /etc/alloy/config.alloy`,
+  then `systemctl restart alloy`.
 - `/etc/default/alloy` holds the credentials (readable by root only).
 - If no data arrives in Grafana, `journalctl -u alloy` shows the push errors (wrong URL, user
   or token scope are the usual causes).

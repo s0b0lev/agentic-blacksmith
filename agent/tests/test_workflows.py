@@ -123,18 +123,28 @@ def test_adopter_example_maps_secrets_explicitly():
 def test_adopter_example_routes_all_three_events():
     doc = _load(ADOPTER)
     on = _on(doc)
-    assert set(on["issues"]["types"]) == {"labeled", "unlabeled"}
-    assert on["pull_request"]["types"] == ["closed"]
+    assert set(on["issues"]["types"]) == {"labeled", "unlabeled", "closed"}
+    # pull_request workflows are skipped for a conflicting pull request; pull_request_target
+    # is not, and the jobs never check out the pull request's code.
+    assert "pull_request" not in on
+    assert on["pull_request_target"]["types"] == ["closed"]
     assert on["repository_dispatch"]["types"] == ["blacksmith-self-destruct"]
 
     jobs = doc["jobs"]
     spin_if = jobs["spin-up"]["if"]
     assert "'labeled'" in spin_if and "'blacksmith'" in spin_if
+    assert "closed" not in spin_if
 
     tear_if = jobs["tear-down"]["if"]
     assert "'unlabeled'" in tear_if
+    assert "contains(github.event.issue.labels.*.name, 'blacksmith')" in tear_if
     assert "'blacksmith/issue-'" in tear_if
+    assert "github.event_name == 'pull_request_target'" in tear_if
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in tear_if
     assert "repository_dispatch" in tear_if
+    # resolve listens to the same events; tear-down adds the resolved-issue guard.
+    resolve_if = jobs["resolve"]["if"].strip()
+    assert tear_if.strip() == f"({resolve_if}) && needs.resolve.outputs.issue != ''"
     assert jobs["tear-down"]["needs"] == "resolve"
     assert "needs.resolve.outputs.issue" in str(jobs["tear-down"]["with"]["issue"])
 
@@ -154,7 +164,8 @@ def test_adopter_unlabel_skips_tear_down_when_pr_is_open():
     assert ('gh pr list --repo "$REPO" --head "blacksmith/issue-$n" --state open '
             "--json number --jq length") in script
     skip = script.index('echo "issue=" >> "$GITHUB_OUTPUT"')
-    assert script.index('if [ "$EVENT_NAME" = issues ]') < skip
+    assert script.index('if [ "$EVENT_NAME" = issues ]') < skip  # unlabeled and closed alike
+    assert 'pull_request_target) n="${HEAD_REF#blacksmith/issue-}" ;;' in script
     assert skip < script.index('echo "issue=$n" >> "$GITHUB_OUTPUT"')
 
 

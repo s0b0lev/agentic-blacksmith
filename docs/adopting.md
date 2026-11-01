@@ -227,12 +227,15 @@ Save this as `.github/workflows/blacksmith.yml` in your repository. It is the sa
 # and BLACKSMITH_TELEGRAM_CHAT_ID (may be empty to skip Telegram).
 # The label below must match `label:` in blacksmith.yml. Secrets are mapped explicitly:
 # `secrets: inherit` only works within one organization or enterprise.
+# `pull_request_target`, not `pull_request`: GitHub skips `pull_request` workflows for a pull
+# request that has a merge conflict, which would leave the droplet running when such a pull
+# request is closed. No job below checks out the pull request's code.
 name: blacksmith
 
 on:
   issues:
-    types: [labeled, unlabeled]
-  pull_request:
+    types: [labeled, unlabeled, closed]
+  pull_request_target:
     types: [closed]
   repository_dispatch:
     types: [blacksmith-self-destruct]
@@ -259,8 +262,8 @@ jobs:
 
   resolve:
     if: >-
-      (github.event_name == 'issues' && github.event.action == 'unlabeled' && github.event.label.name == 'blacksmith')
-      || (github.event_name == 'pull_request' && github.event.action == 'closed' && startsWith(github.event.pull_request.head.ref, 'blacksmith/issue-'))
+      (github.event_name == 'issues' && ((github.event.action == 'unlabeled' && github.event.label.name == 'blacksmith') || (github.event.action == 'closed' && contains(github.event.issue.labels.*.name, 'blacksmith'))))
+      || (github.event_name == 'pull_request_target' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'blacksmith/issue-'))
       || github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
     permissions:
@@ -280,7 +283,7 @@ jobs:
         run: |
           case "$EVENT_NAME" in
             issues) n="$ISSUE_NUMBER" ;;
-            pull_request) n="${HEAD_REF#blacksmith/issue-}" ;;
+            pull_request_target) n="${HEAD_REF#blacksmith/issue-}" ;;
             repository_dispatch) n="$PAYLOAD_ISSUE" ;;
             *) n="" ;;
           esac
@@ -288,8 +291,8 @@ jobs:
             echo "::error::cannot resolve an issue number from the $EVENT_NAME event (got '$n')"
             exit 1
           fi
-          # Removing the label stops work only before a pull request exists; after that,
-          # closing the pull request tears the droplet down.
+          # Removing the label or closing the issue stops work only before a pull request
+          # exists; after that, closing the pull request tears the droplet down.
           if [ "$EVENT_NAME" = issues ]; then
             open="$(gh pr list --repo "$REPO" --head "blacksmith/issue-$n" --state open --json number --jq length)"
             if [ "$open" -ge 1 ]; then
@@ -303,8 +306,8 @@ jobs:
   tear-down:
     needs: resolve
     if: >-
-      ((github.event_name == 'issues' && github.event.action == 'unlabeled' && github.event.label.name == 'blacksmith')
-      || (github.event_name == 'pull_request' && github.event.action == 'closed' && startsWith(github.event.pull_request.head.ref, 'blacksmith/issue-'))
+      ((github.event_name == 'issues' && ((github.event.action == 'unlabeled' && github.event.label.name == 'blacksmith') || (github.event.action == 'closed' && contains(github.event.issue.labels.*.name, 'blacksmith'))))
+      || (github.event_name == 'pull_request_target' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'blacksmith/issue-'))
       || github.event_name == 'repository_dispatch')
       && needs.resolve.outputs.issue != ''
     uses: s0b0lev/agentic-blacksmith/.github/workflows/tear-down.yml@v1

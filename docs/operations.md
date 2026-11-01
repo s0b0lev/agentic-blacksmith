@@ -183,9 +183,11 @@ Any of these runs the tear-down workflow, which destroys the droplet, deletes th
 workspace and the `blacksmith-assets/issue-12` branch, and posts "Preview server destroyed."
 on the pull request (or on the issue when there is no pull request).
 
-- Close the pull request (merged or not).
-- Remove the `blacksmith` label from the issue. This is the way to stop work before a pull
-  request exists. Once a pull request is open, removing the label does nothing; close the
+- Close the pull request (merged or not). The adopter workflow listens with
+  `pull_request_target`, not `pull_request`: GitHub skips `pull_request` workflows for a pull
+  request with a merge conflict, which would leave the droplet running.
+- Remove the `blacksmith` label from the issue, or close the issue. Either is the way to stop
+  work before a pull request exists. Once a pull request is open, both do nothing; close the
   pull request instead.
 - Send the `blacksmith-self-destruct` event yourself:
 
@@ -241,7 +243,7 @@ terraform workspace select default && terraform workspace delete issue-12
 - **A rapid label, unlabel, relabel can cancel a queued tear-down.** Spin-up and tear-down
   for one issue share a concurrency group, and GitHub keeps only one queued job per group. A
   running tear-down is never cancelled. If a droplet survives an unlabel, close the pull
-  request or send the dispatch event.
+  request or the issue, or send the dispatch event.
 - **The lifetime timer counts from boot.** Rebooting the droplet restarts the clock.
 - **Each round comment ends with `took <time>`,** the wall clock of that round.
 - **Review rounds consume comments even when the agent session fails.** The round comment

@@ -40,9 +40,10 @@ example, `first_run_minutes: 120` and `review_round_minutes: 45`; adjust them if
       a comment reading `Round 1: addressed 1 comment(s) in <sha>; preview ok; took <time>`.
 - [ ] After the round, the preview URL still loads with the same login as before, and shows
       the requested change.
-- [ ] Close the pull request without merging.
 - [ ] The progress comment on the issue ends with a `### Timing` table: one row per stage, a
       bold total with the session count, and a "From the label to the finish" line.
+- [ ] Close the pull request without merging. If the pull request has a merge conflict with the
+      base branch, keep it that way: the tear-down must still run (`pull_request_target`).
 - [ ] Within ~5 minutes: the pull request has a "Preview server destroyed." comment, and the
       DigitalOcean console shows no droplet for this issue. With observability enabled, the
       Live dashboard link now returns 404.

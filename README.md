@@ -9,7 +9,7 @@ runs your checks, and opens a pull request with screenshots and a preview link b
 auth.
 
 Review comments on that pull request start fix rounds: the agent replies to each comment and
-pushes a commit. Closing the pull request destroys the droplet. Nothing runs on your laptop,
+pushes a commit. Closing the pull request (or the issue) destroys the droplet. Nothing runs on your laptop,
 and nothing stays running after the work is done.
 
 ## The flow

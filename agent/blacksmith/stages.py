@@ -247,11 +247,17 @@ def _verify_failed(verify_md: str) -> bool:
     return first.startswith("RESULT: fail")
 
 
+def _file_list(paths: list[str]) -> str:
+    return "\n".join(f"- `{p}`" for p in paths) if paths else "- (none)"
+
+
 def stage_verify(cfg, ctx, gh, run, state, env) -> None:
     for loop in range(MAX_BUILD_FIXES + 1):
         table, hard = _run_checks(cfg, ctx, run)
         verify = _fresh(ctx.work_dir / "verify.md")
-        _claude(cfg, ctx, run, env, "verify", extra={"check_results": table})
+        changed = git.changed_paths(ctx.repo_root, f"origin/{ctx.base_branch}", run)
+        _claude(cfg, ctx, run, env, "verify",
+                extra={"check_results": table, "changed_files": _file_list(changed)})
         verify_md = _require(verify)
         if not hard and not _verify_failed(verify_md):
             return

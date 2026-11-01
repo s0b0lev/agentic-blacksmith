@@ -283,6 +283,15 @@ line="export PATH=\"\$HOME/.local/bin:\$HOME/.nvm/versions/node/current/bin:\$PA
 grep -qxF "$line" "$HOME/.profile" || printf "%s\n" "$line" >> "$HOME/.profile"
 '
 as_bs 'echo "uv $(uv --version), node $(node --version), npm $(npm --version)"'
+# The browser helper (puppeteer-core driving the browser above with a persistent profile),
+# installed from its lockfile into the agent user's home so the verify and design stages
+# can log in and screenshot logged-in screens.
+install -d -o blacksmith -g blacksmith "$HOME_DIR/blacksmith-tools"
+cp -r "$AGENT/tools/"* "$HOME_DIR/blacksmith-tools/"
+chown -R blacksmith:blacksmith "$HOME_DIR/blacksmith-tools"
+as_bs 'cd "$HOME/blacksmith-tools" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund' \
+  || die "cannot install the browser helper (npm ci in $HOME_DIR/blacksmith-tools)"
+set_conf BLACKSMITH_BROWSE "$HOME_DIR/blacksmith-tools/browse.mjs"
 
 step 3 "observability"
 OBS_ENABLED="$(file_get "$CONF" OBSERVABILITY_ENABLED)"

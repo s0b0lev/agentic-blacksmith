@@ -18,19 +18,24 @@ change meets the plan. You change no code and commit nothing.
 
 1. Checks: any required check marked FAIL means the result is fail. To explain a
    failure you may run the repository's own test command for that part, read-only.
-2. Browser: use the binary named by `$BLACKSMITH_BROWSER`, headless:
-   `"$BLACKSMITH_BROWSER" --headless=new --no-sandbox --disable-gpu --window-size=1366,900`
-   plus `--screenshot=<file> <url>` for an image or `--dump-dom <url>` for the HTML.
-   With basic auth, put credentials in the URL: `https://user:password@host/path`.
-   Never write those credentials into the report.
-3. For each acceptance criterion, in order:
+2. Browser: `node "$BLACKSMITH_BROWSE" --profile <scratch>/browser [--auth user:pass] steps.json`
+   runs a JSON list of steps (`goto`, `fill`, `click`, `wait`, `viewport`, `screenshot`,
+   `dump`) in the binary named by `$BLACKSMITH_BROWSER`. The profile keeps cookies, so log
+   in once and every later run is logged in. Never write credentials into the report.
+3. List every screen the change touches: from the changed files in the prompt, map each
+   route, page, component and template to the screens that render it, and add the states
+   the acceptance criteria name. Screens behind a login count: find the development login
+   the repository documents or seeds (README, docs, seed scripts, env examples), log in
+   through the real form, and walk them. If no login can be found, say so in Findings.
+4. For each screen and each criterion, in order:
    - open the page or call the endpoint that shows it (use `curl -u` for APIs);
    - take a screenshot named `<nn>-<slug>.png` in the shots directory, `nn` from 01;
-   - for narrow layouts add `--window-size=390,844` and a `-mobile` slug;
+   - for any screen whose layout the change can affect, add `{"viewport": "390x844"}` and a
+     `-mobile` slug;
    - compare what you see with the criterion; record pass or fail and why.
-4. Look at what the plan did not mention but the change touches: broken pages, error
+5. Look at what the plan did not mention but the change touches: broken pages, error
    banners, missing assets, 500s in dumped DOM. Record them as findings.
-5. Look at screenshots yourself (read the image files) before judging them.
+6. Look at screenshots yourself (read the image files) before judging them.
 
 ## Report
 
@@ -43,11 +48,13 @@ Each finding: where, what you expected, what you saw, how to reproduce, screensh
 
 - The report exists with the exact first line and the three sections.
 - Every acceptance criterion has a verdict and, for anything visible, a screenshot.
+- Every screen the change touches has a screenshot, logged in where the screen needs it.
 - No repository file changed.
 
 ## When stuck
 
 - Preview unreachable or `none`: say so under Browser walk, judge on checks and code
   reading, and fail any criterion that only the browser could show.
-- Browser crashes: retry once with a fresh `--user-data-dir` in the scratch directory;
-  then fall back to `curl` and record that screenshots are missing.
+- Browser crashes: retry once with a fresh `--profile` directory; then fall back to
+  `curl` and the bare `"$BLACKSMITH_BROWSER" --headless=new --screenshot=<file> <url>` for
+  logged-out pages, and record which screenshots are missing.

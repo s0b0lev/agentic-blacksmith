@@ -381,6 +381,12 @@ in a login shell. Each line is a separate shell, so `cd` does not carry over; wr
 **`checks_setup`.** Shell commands run before the checks on every verify pass, for example
 starting the databases your tests need. A failure counts as a failed required check.
 
+**What verify looks at.** The verify stage screenshots every screen the change touches,
+including screens behind a login: it looks for the development credentials your repository
+documents or seeds (README, docs, seed scripts, env examples) and logs in through the real
+form with a browser helper that keeps the session. Document the seeded login somewhere the
+agent can find it, or those screens are reported as not verified.
+
 **`checks`.** What the verify stage must run. Each item is a command string, or a mapping with
 `run` and `soft`. A failing required check sends the agent back to fix the code (at most two
 fix loops). A check with `soft: true` is reported in the pull request but never blocks it.
@@ -420,6 +426,13 @@ publishes ports 80 and 443 and routes to your services.
   strip a path prefix before proxying.
 - `ready` (default `https://${PREVIEW_HOST}/`): a URL that must answer 2xx or 3xx within 10
   minutes for the preview to count as up.
+- `overrides` may also add `build.args` to a service in `build`; with `PREVIEW_HOST` written
+  to `.env` through `env`, a build argument such as `PREVIEW_HOST: "${PREVIEW_HOST}"` reaches
+  the Dockerfile. Frameworks that check a form submission's Origin against an allowlist
+  (React Router 8 `allowedActionOrigins`, Django `CSRF_TRUSTED_ORIGINS`, Rails
+  `config.hosts`) see every preview POST as cross-origin otherwise, because the proxy
+  terminates TLS: logins, carts and checkouts then answer 400 or 403 on the preview while
+  production works. Allow the preview host from that build argument.
 - `auth` (default `basic`): `basic` puts the whole preview behind HTTP basic auth with user
   `preview` and a random password; `none` turns it off.
 

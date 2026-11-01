@@ -16,7 +16,8 @@ ROLES = {
 SKILLS = ("blacksmith-plan", "blacksmith-build", "blacksmith-verify",
           "blacksmith-design-check", "blacksmith-pr", "blacksmith-review")
 EXTRA = {"diagnostics": "D", "check_results": "C", "verify": "V", "comments": "M",
-         "pr_number": "12", "pr_url": "https://x/pull/12", "reply_marker": "<!-- r -->"}
+         "changed_files": "F", "pr_number": "12", "pr_url": "https://x/pull/12",
+         "reply_marker": "<!-- r -->"}
 KNOWN = ("issue", "branch", "host", "work_dir", "preview_url", "preview_auth", *EXTRA)
 # Skills and prompts stay project-neutral: they must not borrow names from the sample example.
 PROJECT_NAMES = ("sample-shop", "sampleshop", "acme")
@@ -78,6 +79,18 @@ def test_verify_prompt_requires_result_line():
     assert "$BLACKSMITH_BROWSER" in text
     for section in ("## Checks", "## Browser walk", "## Findings"):
         assert section in text
+
+
+def test_verify_prompt_walks_every_touched_screen_logged_in():
+    text = source("verify")
+    assert "{changed_files}" in text
+    assert "$BLACKSMITH_BROWSE" in text and "--profile" in text
+    assert "every screen the change touches" in text
+    skill = (SKILLS_DIR / "blacksmith-verify" / "SKILL.md").read_text()
+    assert "$BLACKSMITH_BROWSE" in skill and "every screen the change touches" in skill
+    assert "log in" in skill.lower()
+    design = source("design")
+    assert "$BLACKSMITH_BROWSE" in design
 
 
 def test_plan_design_pr_prompts_name_sections():

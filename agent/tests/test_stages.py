@@ -151,6 +151,7 @@ def make_env(tmp_path, *, env=None, changed="storefront/app/page.tsx\n", **limit
     for name in PROMPTS:
         (prompts / f"{name}.md").write_text(
             f"PROMPT:{name}\ndiag={{diagnostics}}\nchecks={{check_results}}\nverify={{verify}}\n"
+            f"files={{changed_files}}\n"
         )
     cfg = load_config(EXAMPLE)
     if limits:
@@ -248,6 +249,13 @@ def test_preview_fix_recovers(tmp_path):
     state = go(e)
     assert e.claude.names.count("preview_fix") == 1
     assert state.stage == "done" and e.gh.prs[0]["draft"] is False
+
+
+def test_verify_prompt_lists_the_changed_files(tmp_path):
+    e = make_env(tmp_path, changed="storefront/app/page.tsx\nadmin/app/routes/promo.tsx\n")
+    go(e)
+    prompt = e.claude.prompts("verify")[0]
+    assert "storefront/app/page.tsx" in prompt and "admin/app/routes/promo.tsx" in prompt
 
 
 def test_verify_hard_check_failure_loops_build_fix_max_twice(tmp_path):

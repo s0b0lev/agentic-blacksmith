@@ -1,0 +1,9 @@
+{
+  "name": "blacksmith-tools",
+  "private": true,
+  "description": "Browser helper for the verify and design stages: drives the droplet's Chrome with a persistent profile.",
+  "type": "module",
+  "dependencies": {
+    "puppeteer-core": "25.16.0"
+  }
+}

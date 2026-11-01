@@ -44,6 +44,8 @@ Look in this order. Most questions are answered by the first four.
    | Runner log, one line per event | `~blacksmith/repo/.blacksmith/log.md` |
    | Current stage, PR number, round | `~blacksmith/repo/.blacksmith/state.json` |
    | Agent transcripts, one file per session | `~blacksmith/repo/.blacksmith/transcripts/` |
+   | Screenshots and the browser profile of the verify stage | `~blacksmith/repo/.blacksmith/shots/`, `~blacksmith/repo/.blacksmith/browser/` |
+   | Browser helper (`node browse.mjs`, see adopting.md step 8) | `~blacksmith/blacksmith-tools/` |
    | Stage outputs | `~blacksmith/repo/.blacksmith/plan.md`, `verify.md`, `design.md`, `pr.md` |
    | Preview inputs | `~blacksmith/repo/.blacksmith/Caddyfile`, `compose.override.yml`, `preview.json` |
    | Log shipper (observability) | `journalctl -u alloy`, `/etc/alloy/config.alloy` |

@@ -14,20 +14,35 @@ Tokens and passwords exist only as environment variables. Never print, commit, o
 {check_results}
 
 - Preview: {preview_url}  (basic auth `user / password`: {preview_auth})
+- Files the branch changes against the base branch:
+
+{changed_files}
 
 ## Browser walk
 
-The browser binary is `$BLACKSMITH_BROWSER` (default `chromium`); use it headless. Screenshot:
+Screenshot every screen the change touches, not only the states the acceptance criteria
+name: map each changed route, page, component and template above to the screens that render
+it, and open each one. Screens behind a login are not exempt: log in with the development
+credentials the repository documents or seeds (README, docs, seed scripts, env examples),
+then walk the pages. Take the narrow layout too (viewport `390x844`, `-mobile` slug) for any
+screen whose layout the change can affect.
+
+The helper `node "$BLACKSMITH_BROWSE"` drives the browser (`$BLACKSMITH_BROWSER`) with a
+persistent profile, so a login in one run carries over to the next:
 
 ```
-"$BLACKSMITH_BROWSER" --headless=new --no-sandbox --disable-gpu --window-size=1366,900 \
-  --screenshot={work_dir}/shots/01-home.png 'https://user:password@host/path'
+node "$BLACKSMITH_BROWSE" --profile {work_dir}/browser --auth 'user:password' steps.json
 ```
 
-When the auth above is not `none`, put the user and password in the URL as shown; otherwise
-use the preview URL as is. Use `--dump-dom` instead of `--screenshot` to read page content.
-Screenshot every state named in the acceptance criteria to `{work_dir}/shots/<nn>-<slug>.png`
-(`nn` counts from 01). Do not change repository files and do not commit anything.
+`steps.json` is a list of steps run in order: `{{"goto": url}}`, `{{"fill": ["css", "value"]}}`,
+`{{"click": "css"}}`, `{{"wait": "css" | ms | "navigation"}}`, `{{"viewport": "390x844"}}`,
+`{{"screenshot": "{work_dir}/shots/01-home.png"}}`, `{{"dump": "{work_dir}/page.html"}}`.
+Pass `--auth` only when the auth above is not `none`. For a single logged-out page the bare
+browser also works: `"$BLACKSMITH_BROWSER" --headless=new --no-sandbox --disable-gpu
+--window-size=1366,900 --screenshot=<file> 'https://user:password@host/path'`.
+
+Name screenshots `{work_dir}/shots/<nn>-<slug>.png` (`nn` counts from 01). Do not change
+repository files and do not commit anything.
 
 ## Write
 

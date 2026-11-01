@@ -251,6 +251,16 @@ def test_die_and_the_err_trap_record_the_reason():
     assert 'trap \'FATAL_MSG="command failed (exit $?) at line $LINENO"; log "$FATAL_MSG"\' ERR' in text
 
 
+def test_bootstrap_installs_the_browser_helper():
+    text = BOOTSTRAP.read_text()
+    node = text.index("nvm install 22")
+    tools = text.index('"$AGENT/tools/"', node)  # copied after node exists
+    assert "$HOME/blacksmith-tools" in text[tools:tools + 400]
+    assert "npm ci --omit=dev --ignore-scripts --no-audit --no-fund" in text[tools:tools + 600]
+    conf = text.index('set_conf BLACKSMITH_BROWSE "$HOME_DIR/blacksmith-tools/browse.mjs"')
+    assert tools < conf < text.index('step 3 "observability"')
+
+
 def test_bootstrap_smoke_tests_claude_token():
     text = BOOTSTRAP.read_text()
     install = text.index("claude.ai/install.sh")

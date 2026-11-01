@@ -18,6 +18,7 @@ from blacksmith.config import Config
 from blacksmith.github import GitHub, Issue
 from blacksmith.runner import CommandRunner
 from blacksmith.state import State, load_state, save_state
+from blacksmith.timing import Timing, fmt_duration
 
 Stage = Literal["plan", "build", "preview", "verify", "design", "pr"]
 BUDGET = {"plan": .10, "build": .45, "preview_fix": .05, "verify": .20, "design": .10, "pr": .05}
@@ -59,6 +60,7 @@ class PipelineEnv:
     state_path: Path
     notifier: notify.Telegram | None = None
     milestones: list[str] = field(default_factory=list)
+    timing: Timing = field(default_factory=lambda: Timing.begin(utc_now_iso(), time.monotonic()))
     transcripts: int = 0
     last_session: tuple[str, StageResult] | None = None  # within the current stage
 
@@ -104,7 +106,11 @@ def _post_progress(gh: GitHub, ctx: RunContext, state: State, env: PipelineEnv) 
     header = HEADER.format(branch=ctx.branch)
     if ctx.dashboard_url:
         header += f"\nLive dashboard: {ctx.dashboard_url}"
-    parts = [header, *env.milestones, f"_Stage: `{state.stage}`_"]
+    parts = [header, *env.milestones]
+    if timing := env.timing.render():
+        parts.append(timing)
+    parts.append(f"_Stage: `{state.stage}`_")
+    state.timing = env.timing.as_dict()
     try:
         state.progress_comment_id = gh.upsert_comment(ctx.issue, "progress", "\n\n".join(parts))
     except Exception as exc:
@@ -156,6 +162,7 @@ def _claude(cfg: Config, ctx: RunContext, run: CommandRunner, env: PipelineEnv, 
         env=agent_env(ctx.env),
     )
     env.last_session = (name, res)
+    env.timing.add_session(res.duration_ms, res.cost_usd)
     _log(ctx, env, f"claude {name}: ok={res.ok} timed_out={res.timed_out} "
                    f"turns={res.num_turns} {res.cost_note}".rstrip())
     return res
@@ -340,6 +347,7 @@ def stage_pr(cfg, ctx, gh, run, state, env) -> None:
         _log(ctx, env, f"request_review failed: {exc!r}")
     state.last_seen = env.now_iso()
     state.stage = "done"
+    env.timing.finish(ctx.now(), state.last_seen)
     _milestone(gh, ctx, state, env, f"Opened {pr.url}")
 
 
@@ -373,6 +381,9 @@ def salvage(cfg, ctx, gh, run, state, env, reason: str) -> None:
             body += "\n\n" + section
         state.stage = "salvaged"
         state.last_seen = env.now_iso()
+        env.timing.finish(ctx.now(), state.last_seen)
+        if timing := env.timing.render():
+            body += "\n\n" + timing
         save_state(env.state_path, state)
         try:
             pr = gh.create_pr(head=ctx.branch, base=ctx.base_branch,
@@ -404,6 +415,15 @@ def _failure_reason(reason: str, env: PipelineEnv) -> str:
         f"{reason} (agent session `{name}` {why})"
 
 
+def _labeled_at(cfg: Config, ctx: RunContext, gh: GitHub, env: PipelineEnv) -> str | None:
+    """Best effort: when the label was added, so the timing can count from the label."""
+    try:
+        return gh.labeled_at(ctx.issue, cfg.label)
+    except Exception as exc:
+        _log(ctx, env, f"labeled_at lookup failed: {exc!r}")
+        return None
+
+
 def write_issue_markdown(gh: GitHub, issue_number: int, work_dir: Path,
                          issue: Issue | None = None) -> Path:
     """Write ``work_dir/issue.md`` (fetching the issue unless given) and return its path."""
@@ -433,14 +453,20 @@ def run_first_pass(
         write_issue_markdown(gh, ctx.issue, ctx.work_dir, issue=issue)
     env = PipelineEnv(claude=claude, deploy=deploy, now_iso=now_iso, issue=issue,
                       state_path=state_path, notifier=notifier)
+    env.timing = Timing.begin(now_iso(), ctx.now(), labeled_at=_labeled_at(cfg, ctx, gh, env))
     try:
         for name, stage in STAGES:
             state.stage = name
             _log(ctx, env, f"stage {name}")
+            env.timing.start_stage(name, ctx.now())
             _post_progress(gh, ctx, state, env)
             _notify(ctx, state, env, f"stage {name}")
             env.last_session = None
-            stage(cfg, ctx, gh, run, state, env)
+            try:
+                stage(cfg, ctx, gh, run, state, env)
+            finally:
+                env.timing.end_stage(ctx.now())
+                _log(ctx, env, f"stage {name} took {fmt_duration(env.timing.stages[name].seconds)}")
     except StageFailed as exc:
         salvage(cfg, ctx, gh, run, state, env, _failure_reason(str(exc), env))
     except Exception as exc:

@@ -131,7 +131,7 @@ def test_round_pushes_and_redeploys(tmp_path):
     assert e.gh.upserts[0] == (5, "preview", "**Preview:** https://pr-7.example.com/\n"
                                               "**Preview login:** `preview` / `pw123`")
     assert e.gh.upserts[-1] == (5, "round-1",
-                                "Round 1: addressed 2 comment(s) in abc1234; preview ok")
+                                "Round 1: addressed 2 comment(s) in abc1234; preview ok; took 10s")
     assert "round 1: addressed 2 comment(s)" in (e.ctx.work_dir / "log.md").read_text()
 
 
@@ -150,7 +150,7 @@ def test_round_deploy_failure_reported(tmp_path):
     e.deploy.results = [DOWN]
     assert go(e) is True
     assert e.gh.upserts == [(5, "round-1", "Round 1: addressed 2 comment(s) in abc1234; "
-                                           "preview failed: up app failed")]
+                                           "preview failed: up app failed; took 10s")]
 
 
 def test_round_claude_failure_still_pushes_and_reports(tmp_path):
@@ -159,7 +159,7 @@ def test_round_claude_failure_still_pushes_and_reports(tmp_path):
     assert go(e) is True
     assert [x for x in e.events if x != "reply"][1:4] == ["claude:review", "push", "deploy"]
     assert e.gh.upserts[-1] == (5, "round-1", "Round 1: agent session did not finish cleanly "
-                                              "(timed out); pushed abc1234; preview ok")
+                                              "(timed out); pushed abc1234; preview ok; took 10s")
     (tmp_path / "b").mkdir()
     e2 = prepare(tmp_path / "b")
     e2.claude.result = StageResult(False, False, "", None, tmp_path / "t.json", "")
@@ -297,7 +297,7 @@ def test_round_summary_reaches_telegram_with_the_pr_link(tmp_path):
     e.notifier = FakeNotifier()
     assert go(e) is True
     assert e.notifier.sent == [
-        "acme/shop#7\nRound 1: addressed 2 comment(s) in abc1234; preview ok\nhttps://x/pull/5"
+        "acme/shop#7\nRound 1: addressed 2 comment(s) in abc1234; preview ok; took 10s\nhttps://x/pull/5"
     ]
 
 

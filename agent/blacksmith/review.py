@@ -15,6 +15,7 @@ from blacksmith.stages import (
     RunContext, _commit_push, _preview_meta, _preview_section, load_prompt, utc_now_iso,
 )
 from blacksmith.state import State, load_state, save_state
+from blacksmith.timing import fmt_duration
 
 REPLY_MARKER = "<!-- blacksmith:reply -->"
 ROUND_STAGES = {"done", "salvaged"}
@@ -164,8 +165,10 @@ def review_round(
             return False
         try:
             n = state.round + 1
+            started = ctx.now()
             try:
                 summary = _round(cfg, ctx, gh, run, state, comments, n, claude, deploy, now_iso)
+                summary += f"; took {fmt_duration(ctx.now() - started)}"
             except Exception as exc:
                 summary = f"Round {n} failed: {exc!r}"
             _log(ctx, now_iso, summary[0].lower() + summary[1:])

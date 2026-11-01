@@ -12,7 +12,10 @@ Look in this order. Most questions are answered by the first four.
 1. **The issue's progress comment.** One comment that starts with "**Blacksmith** is working
    on this issue on branch `blacksmith/issue-12`." It is edited in place as stages finish:
    the plan, "Preview is up at ..." with the login, and "Opened <PR URL>" or "Stopped at
-   stage ...". The last line shows the current stage. A separate, earlier comment from the
+   stage ...". A `### Timing` table follows: wall clock and agent-session time per finished
+   stage, then a total with the session count and the cost Claude Code reported, and the
+   time from the label to the finish. The last line shows the current stage. A separate,
+   earlier comment from the
    workflow ("Blacksmith is working on this. Preview will be at ...") links to the workflow
    run.
 2. **The live dashboard** (when `observability` is enabled, [adopting.md](adopting.md),
@@ -240,6 +243,7 @@ terraform workspace select default && terraform workspace delete issue-12
   running tear-down is never cancelled. If a droplet survives an unlabel, close the pull
   request or send the dispatch event.
 - **The lifetime timer counts from boot.** Rebooting the droplet restarts the clock.
+- **Each round comment ends with `took <time>`,** the wall clock of that round.
 - **Review rounds consume comments even when the agent session fails.** The round comment
   then says `agent session did not finish cleanly` or `Round <n> failed`. Those comments are
   not retried; post a new comment to try again.

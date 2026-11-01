@@ -37,10 +37,12 @@ example, `first_run_minutes: 120` and `review_round_minutes: 45`; adjust them if
 - [ ] Leave one review comment on the pull request asking for a small, checkable change.
 - [ ] Within 45 minutes (`review_round_minutes`, plus up to a minute for the poll timer):
       a reply to your comment that ends with a commit sha, a new commit on the branch, and
-      a comment reading exactly `Round 1: addressed 1 comment(s) in <sha>; preview ok`.
+      a comment reading `Round 1: addressed 1 comment(s) in <sha>; preview ok; took <time>`.
 - [ ] After the round, the preview URL still loads with the same login as before, and shows
       the requested change.
 - [ ] Close the pull request without merging.
+- [ ] The progress comment on the issue ends with a `### Timing` table: one row per stage, a
+      bold total with the session count, and a "From the label to the finish" line.
 - [ ] Within ~5 minutes: the pull request has a "Preview server destroyed." comment, and the
       DigitalOcean console shows no droplet for this issue. With observability enabled, the
       Live dashboard link now returns 404.

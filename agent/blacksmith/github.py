@@ -115,6 +115,14 @@ class GitHub:
             comments=tuple(_comment_from_issue_comment(c) for c in comments),
         )
 
+    def labeled_at(self, n: int, label: str) -> str | None:
+        """When ``label`` was last added to issue ``n`` (ISO 8601), or None if never."""
+        events = self._api_list(f"repos/{self.repo}/issues/{n}/events")
+        stamps = [e["created_at"] for e in events
+                  if e.get("event") == "labeled" and (e.get("label") or {}).get("name") == label
+                  and e.get("created_at")]
+        return max(stamps, key=_normalise) if stamps else None
+
     def issue_markdown(self, issue: Issue) -> str:
         text = (
             f"# {issue.title} (#{issue.number})\n\n"

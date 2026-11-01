@@ -36,13 +36,24 @@ def test_prompt_goes_to_stdin_not_argv(fake_runner, tmp_path):
 
 def test_parses_json_result(fake_runner, tmp_path):
     fake_runner.responses["claude"] = CommandResult(
-        0, '{"type":"result","is_error":false,"result":"done","num_turns":7,"total_cost_usd":0.5}', ""
+        0, '{"type":"result","is_error":false,"result":"done","num_turns":7,"total_cost_usd":0.5,'
+        '"duration_ms":90500,"duration_api_ms":80000}', ""
     )
     res = _run(fake_runner, tmp_path)
     assert res.ok and not res.timed_out
     assert res.num_turns == 7
     assert res.result_text == "done"
     assert res.cost_note == "cost_usd=0.5"
+    assert (res.duration_ms, res.cost_usd) == (90500, 0.5)
+
+
+def test_non_finite_duration_and_cost_are_dropped(fake_runner, tmp_path):
+    fake_runner.responses["claude"] = CommandResult(
+        0, '{"type":"result","is_error":false,"result":"done","num_turns":1,'
+        '"total_cost_usd":NaN,"duration_ms":Infinity}', ""
+    )
+    res = _run(fake_runner, tmp_path)
+    assert res.ok and (res.duration_ms, res.cost_usd) == (None, None)
 
 
 def test_is_error_json_not_ok(fake_runner, tmp_path):
@@ -96,3 +107,12 @@ def test_agent_env_drops_grafana_cloud_token():
     env = agent_env({"GRAFANA_CLOUD_TOKEN": "glc_x", "HOME": "/h"})
     assert "GRAFANA_CLOUD_TOKEN" not in env
     assert env["HOME"] == "/h"
+
+
+def test_duration_and_cost_are_none_when_absent_or_not_numbers(fake_runner, tmp_path):
+    fake_runner.responses["claude"] = CommandResult(
+        0, '{"type":"result","is_error":false,"result":"done","duration_ms":"fast","total_cost_usd":true}', ""
+    )
+    res = _run(fake_runner, tmp_path)
+    assert res.ok and res.duration_ms is None and res.cost_usd is None
+    assert res.cost_note == "cost_usd=True"

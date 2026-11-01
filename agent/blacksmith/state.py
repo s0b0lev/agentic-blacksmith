@@ -16,6 +16,7 @@ class State:
     last_seen: str | None = None
     stage: str = "init"
     round: int = 0
+    timing: dict | None = None  # blacksmith.timing.Timing.as_dict() of the first pass
 
 
 def load_state(path: Path) -> State:

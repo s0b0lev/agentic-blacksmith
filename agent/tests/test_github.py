@@ -235,3 +235,17 @@ def test_dispatch_refuses_secret_in_payload(fake_runner):
     with pytest.raises(SecretLeak):
         make(fake_runner).dispatch("go", {"k": f"v {SECRET}"})
     assert fake_runner.calls == []
+
+
+def test_labeled_at_returns_the_latest_matching_label_event(fake_runner):
+    fake_runner.responses["gh api --paginate --slurp repos/o/r/issues/7/events"] = ok([[
+        {"event": "labeled", "label": {"name": "blacksmith"}, "created_at": "2026-10-25T10:58:09Z"},
+        {"event": "unlabeled", "label": {"name": "blacksmith"}, "created_at": "2026-10-25T11:47:54Z"},
+        {"event": "labeled", "label": {"name": "bug"}, "created_at": "2026-10-25T11:50:00Z"},
+        {"event": "closed", "created_at": "2026-10-25T11:51:00Z"},
+        {"event": "labeled", "label": {"name": "blacksmith"}, "created_at": "2026-10-25T11:49:15Z"},
+    ]])
+    gh = make(fake_runner)
+    assert gh.labeled_at(7, "blacksmith") == "2026-10-25T11:49:15Z"
+    assert gh.labeled_at(7, "other") is None
+    assert fake_runner.calls[0][:5] == ["gh", "api", "--paginate", "--slurp", "repos/o/r/issues/7/events"]

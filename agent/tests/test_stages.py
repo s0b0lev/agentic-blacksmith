@@ -70,7 +70,7 @@ class FakeClaude:
             action = action.pop(0)
         if action:
             action(self.work_dir)
-        return StageResult(True, False, "done", 3, transcript, "")
+        return StageResult(True, False, "done", 3, transcript, "", duration_ms=60_000, cost_usd=0.25)
 
 
 class FakeDeploy:
@@ -89,6 +89,20 @@ class FakeDeploy:
         return res
 
 
+class FakeClock:
+    """Monotonic stand-in: every reading is ``step`` seconds after the previous one."""
+
+    def __init__(self, step: float = 10.0) -> None:
+        self.t, self.step = 0.0, step
+
+    def __call__(self) -> float:
+        self.t += self.step
+        return self.t
+
+
+LABELED_AT = "2026-10-23T11:55:00+00:00"  # five minutes before NOW
+
+
 class FakeGitHub:
     def __init__(self, events: list[str]) -> None:
         self.events = events
@@ -96,6 +110,14 @@ class FakeGitHub:
         self.prs: list[dict] = []
         self.reviews: list[tuple[int, str]] = []
         self.fail_create_pr = False
+        self.fail_labeled_at = False
+        self.labeled_at_calls: list[tuple[int, str]] = []
+
+    def labeled_at(self, n, label):
+        self.labeled_at_calls.append((n, label))
+        if self.fail_labeled_at:
+            raise RuntimeError("events api down")
+        return LABELED_AT
 
     def issue(self, n):
         return Issue(n, "Scale widget", "Please add it.", "alice", ("blacksmith",), "open", ())
@@ -137,6 +159,7 @@ def make_env(tmp_path, *, env=None, changed="storefront/app/page.tsx\n", **limit
         repo_root=repo, work_dir=repo / ".blacksmith", issue=7, branch="blacksmith/issue-7",
         base_branch="main", host="pr-7.example.com", prompts_dir=prompts, repo="acme/shop",
         env={"FIGMA_API_KEY": "figma-key-123", "HOME": "/home/blacksmith"} if env is None else env,
+        now=FakeClock(),
     )
     run = EventRunner(events)
     run.responses["git diff"] = CommandResult(0, changed, "")
@@ -541,3 +564,61 @@ def test_no_dashboard_line_without_url(tmp_path):
     go(e)
     assert all("Live dashboard" not in b for (_, _, b) in e.gh.upserts)
     assert "Live dashboard" not in e.gh.prs[0]["body"]
+
+
+# -- timing -----------------------------------------------------------------------
+
+def test_progress_comment_ends_with_a_timing_table(tmp_path):
+    e = make_env(tmp_path)
+    state = go(e)
+    final = e.gh.upserts[-1][2]
+    # The fake clock ticks 10 s per reading: begin, then start/end per stage, finish in pr.
+    assert "### Timing" in final
+    assert "| plan | 10s | 1m 00s in 1 session |" in final
+    assert "| preview | 10s | none |" in final
+    assert "| pr | 10s | 1m 00s in 1 session |" in final
+    assert "| **total** | **2m 00s** | **5m 00s in 5 sessions, $1.25** |" in final
+    assert ("From the label to the finish: 5m 00s, of which 5m 00s passed before the runner "
+            "started.") in final
+    assert final.index("### Timing") < final.index("_Stage: `done`_")
+    assert final.index("Opened https://x/pull/1") < final.index("### Timing")
+    assert e.gh.labeled_at_calls == [(7, "blacksmith")]
+    assert state.timing["total_seconds"] == 120.0 and state.timing["labeled_at"] == LABELED_AT
+    assert state.timing["stages"]["verify"] == {"seconds": 10.0, "agent_seconds": 60.0, "sessions": 1}
+    assert load_state(e.ctx.work_dir / "state.json").timing == state.timing
+    log = (e.ctx.work_dir / "log.md").read_text()
+    assert "stage plan took 10s" in log and "stage pr took 10s" in log
+
+
+def test_timing_table_grows_as_stages_finish_without_a_total(tmp_path):
+    e = make_env(tmp_path)
+    go(e)
+    during_build = next(body for _, _, body in e.gh.upserts if body.endswith("_Stage: `build`_"))
+    assert "| plan | 10s |" in during_build
+    assert "build" not in during_build.split("### Timing")[1].split("_Stage")[0]
+    assert "total" not in during_build and "label" not in during_build
+    at_plan = next(body for _, _, body in e.gh.upserts if body.endswith("_Stage: `plan`_"))
+    assert "### Timing" not in at_plan
+
+
+def test_salvage_reports_timing_in_the_comment_and_the_draft_pr(tmp_path):
+    e = make_env(tmp_path)
+    e.claude.actions["verify"] = None  # verify.md never written: salvage during verify
+    state = go(e)
+    assert state.stage == "salvaged"
+    final = e.gh.upserts[-1][2]
+    assert "| verify | 10s | 1m 00s in 1 session |" in final
+    assert "| **total** |" in final
+    assert "### Timing" in e.gh.prs[0]["body"]
+    assert "| build | 10s |" in e.gh.prs[0]["body"]
+
+
+def test_label_time_lookup_failure_is_logged_not_fatal(tmp_path):
+    e = make_env(tmp_path)
+    e.gh.fail_labeled_at = True
+    state = go(e)
+    assert state.stage == "done" and state.timing["labeled_at"] is None
+    final = e.gh.upserts[-1][2]
+    assert "| **total** | **2m 00s** |" in final and "From the label" not in final
+    assert "labeled_at lookup failed: RuntimeError('events api down')" in (
+        e.ctx.work_dir / "log.md").read_text()

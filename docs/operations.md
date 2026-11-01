@@ -66,9 +66,10 @@ lifetime timer is installed before anything that can fail, so a failed droplet s
 itself after `limits.lifetime_hours`; send the self-destruct event (below) to remove it sooner.
 
 If the repository sets `TELEGRAM_BOT_TOKEN` and `BLACKSMITH_TELEGRAM_CHAT_ID`
-([adopting.md](adopting.md), step 9), the same milestones also arrive in that Telegram chat,
-one message per stage change, with the preview login and the PR link, so you rarely need to
-open the issue to know where a run is. A failed Telegram message is logged in
+([adopting.md](adopting.md), step 9), that Telegram chat gets one message when a run starts,
+when the preview is up (with the login), when the pull request opens, when a run stops, and
+after each review round; stage changes in between are only in the progress comment. A failed
+Telegram message is logged in
 `.blacksmith/log.md` as `telegram failed: ...` and never stops the run.
 
 ## Alloy on the droplet

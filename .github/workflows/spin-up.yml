@@ -43,7 +43,7 @@ on:
         type: string
         default: ""
       telegram_chat_id:
-        description: Telegram chat id that receives stage notifications; empty disables them.
+        description: Telegram chat id that receives the run's notifications; empty disables them.
         type: string
         default: ""
     secrets:

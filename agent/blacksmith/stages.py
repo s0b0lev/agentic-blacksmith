@@ -6,7 +6,7 @@ import json
 import re
 import time
 import traceback
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -118,32 +118,27 @@ def _post_progress(gh: GitHub, ctx: RunContext, state: State, env: PipelineEnv) 
     save_state(env.state_path, state)
 
 
-def _notify(ctx: RunContext, state: State, env: PipelineEnv, text: str) -> None:
+def _notify(ctx: RunContext, state: State, env: PipelineEnv, headline: str,
+            lines: Iterable[str] = ()) -> None:
     """Best effort: a failed Telegram message is logged, never fatal."""
     if env.notifier is None:
         return
-    link = state.pr_url or notify.issue_url(ctx.repo, ctx.issue)
+    if state.pr_url:
+        link, label = state.pr_url, "Open pull request"
+    else:
+        link, label = notify.issue_url(ctx.repo, ctx.issue), "Open issue"
     try:
-        env.notifier.send(notify.compose(ctx.repo, ctx.issue, env.issue.title, text, link))
+        env.notifier.send(notify.compose(headline, ctx.repo, ctx.issue, env.issue.title, lines,
+                                         link, label))
     except Exception as exc:
         _log(ctx, env, f"telegram failed: {exc!r}")
 
 
-def _milestone(gh: GitHub, ctx: RunContext, state: State, env: PipelineEnv, text: str,
-               short: str | None = None) -> None:
-    """Record a milestone in the progress comment; ``short`` replaces it in notifications."""
+def _milestone(gh: GitHub, ctx: RunContext, state: State, env: PipelineEnv, text: str) -> None:
+    """Record a milestone in the progress comment."""
     env.milestones.append(text)
     _log(ctx, env, text.splitlines()[0])
     _post_progress(gh, ctx, state, env)
-    _notify(ctx, state, env, text if short is None else short)
-
-
-def _plan_summary(plan_md: str) -> str:
-    for line in plan_md.splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            return f"Plan: {line[:300]}"
-    return "Plan posted"
 
 
 def _claude(cfg: Config, ctx: RunContext, run: CommandRunner, env: PipelineEnv, name: str,
@@ -198,7 +193,7 @@ def stage_plan(cfg, ctx, gh, run, state, env) -> None:
     plan = _fresh(ctx.work_dir / "plan.md")
     _claude(cfg, ctx, run, env, "plan")
     plan_md = _require(plan).strip()
-    _milestone(gh, ctx, state, env, "### Plan\n\n" + plan_md, short=_plan_summary(plan_md))
+    _milestone(gh, ctx, state, env, "### Plan\n\n" + plan_md)
 
 
 def stage_build(cfg, ctx, gh, run, state, env) -> None:
@@ -219,9 +214,11 @@ def stage_preview(cfg, ctx, gh, run, state, env) -> None:
     if not res.ok:
         raise StageFailed(f"preview failed after {MAX_PREVIEW_FIXES} fix attempts: {res.error}")
     text = f"Preview is up at {res.url}"
-    if res.auth:
-        text += f"\nlogin: {res.auth[0]} / {res.auth[1]}"
+    login = f"login: {res.auth[0]} / {res.auth[1]}" if res.auth else ""
+    if login:
+        text += "\n" + login
     _milestone(gh, ctx, state, env, text)
+    _notify(ctx, state, env, "\U0001f440 Preview ready", [res.url, login])
 
 
 def _run_checks(cfg: Config, ctx: RunContext, run: CommandRunner) -> tuple[str, bool]:
@@ -349,6 +346,8 @@ def stage_pr(cfg, ctx, gh, run, state, env) -> None:
     state.stage = "done"
     env.timing.finish(ctx.now(), state.last_seen)
     _milestone(gh, ctx, state, env, f"Opened {pr.url}")
+    _notify(ctx, state, env, "\u2705 Pull request open",
+            [f"took {fmt_duration(env.timing.total_seconds)}"])
 
 
 STAGES: tuple[tuple[Stage, Callable[..., None]], ...] = (
@@ -393,10 +392,12 @@ def salvage(cfg, ctx, gh, run, state, env, reason: str) -> None:
             _log(ctx, env, f"salvage create_pr failed: {exc!r}")
             _milestone(gh, ctx, state, env, f"Stopped at stage {stage}: {reason}. "
                        "Could not open a draft PR (see runner log).")
+            _notify(ctx, state, env, f"\u26d4 Stopped at {stage}", [reason, "no draft pull request"])
             return
         state.pr_number, state.pr_url = pr.number, pr.url
         _milestone(gh, ctx, state, env,
                    f"Stopped at stage {stage}: {reason}. Opened draft {pr.url}")
+        _notify(ctx, state, env, f"\u26d4 Stopped at {stage}", [reason, "draft pull request opened"])
     except Exception:
         try:
             _log(ctx, env, "salvage crashed:\n" + traceback.format_exc())
@@ -454,13 +455,13 @@ def run_first_pass(
     env = PipelineEnv(claude=claude, deploy=deploy, now_iso=now_iso, issue=issue,
                       state_path=state_path, notifier=notifier)
     env.timing = Timing.begin(now_iso(), ctx.now(), labeled_at=_labeled_at(cfg, ctx, gh, env))
+    _notify(ctx, state, env, "\U0001f528 Started")
     try:
         for name, stage in STAGES:
             state.stage = name
             _log(ctx, env, f"stage {name}")
             env.timing.start_stage(name, ctx.now())
             _post_progress(gh, ctx, state, env)
-            _notify(ctx, state, env, f"stage {name}")
             env.last_session = None
             try:
                 stage(cfg, ctx, gh, run, state, env)

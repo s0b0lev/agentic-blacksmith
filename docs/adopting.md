@@ -429,11 +429,13 @@ URL. [operations.md](operations.md) explains what happens next and where to look
 
 ## 9. Optional: Telegram notifications
 
-The agent can post one short message to a Telegram chat for every stage change and
-milestone: the plan's first line, "Preview is up at ..." with the login, "Opened <PR URL>",
-"Stopped at stage ..." with the reason, and each review round's summary. Every message
-starts with the repository and issue and ends with a link to the issue or pull request.
-Nothing is sent unless both values below are set.
+The agent posts a short message to a Telegram chat at the moments worth a glance, and
+nothing in between: "Started", "Preview ready" with the URL and login, "Pull request open"
+with the time it took, "Stopped at <stage>" with the reason, and "Round <n> done" after each
+review round ("Round <n> incomplete" when the agent session did not finish cleanly, "Round <n>
+failed" when the round crashed). The first line is a bold headline with the repository name and issue number,
+so the lock-screen preview says what happened; the issue title and a link to the issue or
+pull request follow. Nothing is sent unless both values below are set.
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and copy its token.
 2. Add the bot to the group that should receive the messages.

@@ -3,7 +3,7 @@ import json
 import pytest
 
 from blacksmith.notify import (
-    CHAT_KEY, MAX_LENGTH, TOKEN_KEY, NotifyError, Telegram, compose, from_env, issue_url,
+    CHAT_KEY, MAX_LENGTH, MAX_LINE, TOKEN_KEY, NotifyError, Telegram, compose, from_env, issue_url,
 )
 
 
@@ -35,7 +35,8 @@ def test_send_posts_json_to_the_bot_api():
     Telegram("123:abc", "-1001", poster).send("hello")
     assert poster.calls == [(
         "https://api.telegram.org/bot123:abc/sendMessage",
-        {"chat_id": "-1001", "text": "hello", "disable_web_page_preview": True},
+        {"chat_id": "-1001", "text": "hello", "parse_mode": "HTML",
+         "disable_web_page_preview": True},
     )]
 
 
@@ -53,13 +54,43 @@ def test_send_failure_is_a_notify_error_without_the_token():
     assert "400" in str(exc.value) and "RuntimeError" in str(exc.value)
 
 
-def test_compose_is_header_body_link():
-    text = compose("acme/shop", 12, "Scale widget", "stage build", "https://x/issues/12")
-    assert text == "acme/shop#12 Scale widget\nstage build\nhttps://x/issues/12"
+def test_compose_is_headline_title_lines_link_in_html():
+    text = compose("Preview ready", "acme/shop", 12, "Scale widget",
+                   ["https://pr-12.example.com/", "login: preview / pw123"],
+                   "https://x/issues/12", "Open issue")
+    assert text == (
+        "<b>Preview ready</b> \u00b7 shop #12\n"
+        "Scale widget\n"
+        "https://pr-12.example.com/\n"
+        "login: preview / pw123\n"
+        '<a href="https://x/issues/12">Open issue</a>'
+    )
+
+
+def test_compose_escapes_html_in_title_and_lines():
+    text = compose("Stopped", "acme/shop", 1, "Use <b> & co", ["error: a < b"], "https://x/1", "Open")
+    assert "Use &lt;b&gt; &amp; co" in text and "error: a &lt; b" in text
+
+
+def test_compose_shortens_a_long_title():
+    title = "x" * 120
+    text = compose("Started", "acme/shop", 1, title, (), "https://x/1", "Open")
+    assert "x" * 79 + "\u2026" in text and "x" * 80 not in text
+
+
+def test_compose_caps_each_line_so_the_link_survives_the_telegram_limit():
+    text = compose("Stopped at build", "acme/shop", 1, "t", ["x" * 10_000, "y" * 10_000],
+                   "https://x/pull/5", "Open pull request")
+    assert len(text) <= MAX_LENGTH
+    assert text.endswith('<a href="https://x/pull/5">Open pull request</a>')
+    assert "x" * (MAX_LINE - 1) + "\u2026" in text and "x" * MAX_LINE not in text
 
 
 def test_compose_without_title_or_repo():
-    assert compose("", 12, "", "Round 1", "https://x/pull/5") == "#12\nRound 1\nhttps://x/pull/5"
+    assert compose("Round 1 done", "", 12, "", ["preview ok"], "https://x/pull/5", "Open pull request") == (
+        "<b>Round 1 done</b> \u00b7 #12\npreview ok\n"
+        '<a href="https://x/pull/5">Open pull request</a>'
+    )
 
 
 def test_issue_url():

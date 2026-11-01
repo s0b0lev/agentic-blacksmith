@@ -498,29 +498,24 @@ class FakeNotifier:
 
 
 ISSUE_URL = "https://github.com/acme/shop/issues/7"
-HEAD = "acme/shop#7 Scale widget"
+ISSUE_LINK = f'<a href="{ISSUE_URL}">Open issue</a>'
+PR_LINK = '<a href="https://x/pull/1">Open pull request</a>'
 
 
-def test_telegram_gets_every_stage_change_and_milestone(tmp_path):
+def _msg(headline, *lines, link=ISSUE_LINK):
+    return "\n".join([f"<b>{headline}</b> \u00b7 shop #7", "Scale widget", *lines, link])
+
+
+def test_telegram_gets_started_preview_and_pull_request_only(tmp_path):
     e = make_env(tmp_path)
     e.notifier = FakeNotifier()
     go(e)
-    assert e.notifier.sent[0] == f"{HEAD}\nstage plan\n{ISSUE_URL}"
-    assert e.notifier.sent[1] == f"{HEAD}\nPlan: Goal: add a scale widget\n{ISSUE_URL}"
-    assert (f"{HEAD}\nPreview is up at https://pr-7.example.com/\nlogin: preview / pw123\n"
-            f"{ISSUE_URL}") in e.notifier.sent
-    assert e.notifier.sent[-1] == f"{HEAD}\nOpened https://x/pull/1\nhttps://x/pull/1"
-    stages = [m.splitlines()[1] for m in e.notifier.sent if m.splitlines()[1].startswith("stage ")]
-    assert stages == ["stage plan", "stage build", "stage preview", "stage verify",
-                      "stage design", "stage pr"]
-
-
-def test_telegram_plan_summary_skips_headings(tmp_path):
-    e = make_env(tmp_path)
-    e.notifier = FakeNotifier()
-    e.claude.actions["plan"] = _write("plan.md", "## Goal\n\nAdd a widget.\n\n## Criteria\n")
-    go(e)
-    assert e.notifier.sent[1] == f"{HEAD}\nPlan: Add a widget.\n{ISSUE_URL}"
+    assert e.notifier.sent == [
+        _msg("\U0001f528 Started"),
+        _msg("\U0001f440 Preview ready", "https://pr-7.example.com/", "login: preview / pw123"),
+        # The fake clock ticks 10 s per reading; see test_timing_* for the exact budget.
+        _msg("\u2705 Pull request open", "took 2m 00s", link=PR_LINK),
+    ]
 
 
 def test_telegram_failure_is_logged_not_fatal(tmp_path):
@@ -532,15 +527,23 @@ def test_telegram_failure_is_logged_not_fatal(tmp_path):
     assert "telegram failed: RuntimeError('telegram down')" in log
 
 
-def test_telegram_gets_the_salvage_reason_with_the_draft_link(tmp_path):
+def test_telegram_gets_the_stop_reason_with_the_draft_link(tmp_path):
     e = make_env(tmp_path)
     e.notifier = FakeNotifier()
     e.claude.actions["plan"] = lambda work_dir: None
     go(e)
-    assert e.notifier.sent[-1] == (
-        f"{HEAD}\nStopped at stage plan: plan.md not written. Opened draft https://x/pull/1\n"
-        "https://x/pull/1"
-    )
+    assert e.notifier.sent[-1] == _msg(
+        "\u26d4 Stopped at plan", "plan.md not written", "draft pull request opened", link=PR_LINK)
+
+
+def test_telegram_stop_without_a_draft_links_the_issue(tmp_path):
+    e = make_env(tmp_path)
+    e.notifier = FakeNotifier()
+    e.claude.actions["plan"] = lambda work_dir: None
+    e.gh.fail_create_pr = True
+    go(e)
+    assert e.notifier.sent[-1] == _msg(
+        "\u26d4 Stopped at plan", "plan.md not written", "no draft pull request")
 
 
 def test_no_notifier_means_no_messages(tmp_path):

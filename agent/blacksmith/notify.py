@@ -1,15 +1,18 @@
-"""Best-effort Telegram notifications: stage changes, milestones and review rounds."""
+"""Best-effort Telegram notifications: one short HTML message per moment worth a glance."""
 
 from __future__ import annotations
 
+import html
 import json
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 TOKEN_KEY = "TELEGRAM_BOT_TOKEN"
 CHAT_KEY = "TELEGRAM_CHAT_ID"
 MAX_LENGTH = 4096  # Telegram's limit for one message
+MAX_TITLE = 80  # issue titles longer than this are cut with an ellipsis
+MAX_LINE = 1000  # per extra line, so a cut never lands inside an HTML tag or entity
 TIMEOUT_S = 10
 
 Poster = Callable[[str, bytes], None]
@@ -37,6 +40,7 @@ class Telegram:
         body = json.dumps({
             "chat_id": self.chat_id,
             "text": text[:MAX_LENGTH],
+            "parse_mode": "HTML",
             "disable_web_page_preview": True,
         }).encode()
         try:
@@ -60,7 +64,22 @@ def issue_url(repo: str, issue: int) -> str:
     return f"https://github.com/{repo}/issues/{issue}"
 
 
-def compose(repo: str, issue: int, title: str, text: str, link: str) -> str:
-    """``owner/name#N title`` on the first line, the message, then the issue or PR link."""
-    head = f"{repo}#{issue} {title}".strip()
-    return f"{head}\n{text}\n{link}"
+def _cut(text: str, limit: int) -> str:
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "\u2026"
+
+
+def compose(headline: str, repo: str, issue: int, title: str, lines: Iterable[str] = (),
+            link: str = "", label: str = "") -> str:
+    """Telegram HTML: a bold headline with the repository name and issue number on the first
+    line (what the lock screen shows), the issue title, extra lines, then one labelled link.
+    """
+    name = repo.rsplit("/", 1)[-1]
+    head = f"<b>{html.escape(headline)}</b> \u00b7 {name + ' ' if name else ''}#{issue}"
+    parts = [head]
+    if title:
+        parts.append(html.escape(_cut(title, MAX_TITLE)))
+    parts.extend(html.escape(_cut(line, MAX_LINE)) for line in lines if line)
+    if link:
+        parts.append(f'<a href="{html.escape(link, quote=True)}">{html.escape(label or link)}</a>')
+    return "\n".join(parts)

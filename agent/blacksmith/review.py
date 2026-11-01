@@ -36,13 +36,16 @@ def _load(ctx: RunContext) -> State | None:
 
 
 def _notify(ctx: RunContext, state: State, notifier: notify.Telegram | None,
-            now_iso: Callable[[], str], text: str) -> None:
+            now_iso: Callable[[], str], headline: str, text: str) -> None:
     """Best effort, like the round comment: a failed message is logged, never fatal."""
     if notifier is None:
         return
-    link = state.pr_url or notify.issue_url(ctx.repo, ctx.issue)
+    if state.pr_url:
+        link, label = state.pr_url, "Open pull request"
+    else:
+        link, label = notify.issue_url(ctx.repo, ctx.issue), "Open issue"
     try:
-        notifier.send(notify.compose(ctx.repo, ctx.issue, "", text, link))
+        notifier.send(notify.compose(headline, ctx.repo, ctx.issue, "", [text], link, label))
     except Exception as exc:
         _log(ctx, now_iso, f"telegram failed: {exc!r}")
 
@@ -95,8 +98,8 @@ def _post_replies(ctx: RunContext, gh: GitHub, pr: int, comments: list[Comment],
 
 def _round(cfg: Config, ctx: RunContext, gh: GitHub, run: CommandRunner, state: State,
            comments: list[Comment], n: int, claude: Callable[..., StageResult],
-           deploy: Callable[..., preview.PreviewResult], now_iso: Callable[[], str]) -> str:
-    """Run one round and return its summary line."""
+           deploy: Callable[..., preview.PreviewResult], now_iso: Callable[[], str]) -> tuple[str, bool]:
+    """Run one round; its summary line and whether the agent session finished cleanly."""
     (ctx.work_dir / "transcripts").mkdir(parents=True, exist_ok=True)
     (ctx.work_dir / "replies.json").unlink(missing_ok=True)  # never repost a stale file
     prompt = load_prompt(ctx.prompts_dir, "review", ctx, {
@@ -132,10 +135,10 @@ def _round(cfg: Config, ctx: RunContext, gh: GitHub, run: CommandRunner, state: 
         preview_note = f"failed: {pres.error}"
 
     if res.ok:
-        return f"Round {n}: addressed {replied} comment(s) in {sha}; preview {preview_note}"
+        return f"Round {n}: addressed {replied} comment(s) in {sha}; preview {preview_note}", True
     why = "timed out" if res.timed_out else "error"
     return (f"Round {n}: agent session did not finish cleanly ({why}); pushed {sha}; "
-            f"preview {preview_note}")
+            f"preview {preview_note}"), False
 
 
 def review_round(
@@ -167,16 +170,20 @@ def review_round(
             n = state.round + 1
             started = ctx.now()
             try:
-                summary = _round(cfg, ctx, gh, run, state, comments, n, claude, deploy, now_iso)
+                summary, clean = _round(cfg, ctx, gh, run, state, comments, n, claude, deploy,
+                                        now_iso)
                 summary += f"; took {fmt_duration(ctx.now() - started)}"
+                headline = (f"\U0001f501 Round {n} done" if clean
+                            else f"\u26a0\ufe0f Round {n} incomplete")
             except Exception as exc:
                 summary = f"Round {n} failed: {exc!r}"
+                headline = f"\u26a0\ufe0f Round {n} failed"
             _log(ctx, now_iso, summary[0].lower() + summary[1:])
             try:
                 gh.upsert_comment(state.pr_number, f"round-{n}", summary)
             except Exception as exc:
                 _log(ctx, now_iso, f"round {n} summary comment failed: {exc!r}")
-            _notify(ctx, state, notifier, now_iso, summary)
+            _notify(ctx, state, notifier, now_iso, headline, summary.split(": ", 1)[-1])
             # Advance even after a failure so the same comments are not retried forever.
             state.last_seen = round_start
             state.round = n

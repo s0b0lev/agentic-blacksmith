@@ -97,14 +97,14 @@ variable "figma_api_key" {
 }
 
 variable "telegram_bot_token" {
-  description = "Telegram bot token for stage notifications (TELEGRAM_BOT_TOKEN on the droplet); empty disables them."
+  description = "Telegram bot token for the run's notifications (TELEGRAM_BOT_TOKEN on the droplet); empty disables them."
   type        = string
   sensitive   = true
   default     = ""
 }
 
 variable "telegram_chat_id" {
-  description = "Telegram chat id that receives stage notifications (TELEGRAM_CHAT_ID on the droplet)."
+  description = "Telegram chat id that receives the run's notifications (TELEGRAM_CHAT_ID on the droplet)."
   type        = string
   default     = ""
 }

@@ -297,8 +297,27 @@ def test_round_summary_reaches_telegram_with_the_pr_link(tmp_path):
     e.notifier = FakeNotifier()
     assert go(e) is True
     assert e.notifier.sent == [
-        "acme/shop#7\nRound 1: addressed 2 comment(s) in abc1234; preview ok; took 10s\nhttps://x/pull/5"
+        "<b>\U0001f501 Round 1 done</b> \u00b7 shop #7\n"
+        "addressed 2 comment(s) in abc1234; preview ok; took 10s\n"
+        '<a href="https://x/pull/5">Open pull request</a>'
     ]
+
+
+def test_round_with_an_unfinished_session_is_headlined_incomplete(tmp_path):
+    e = prepare(tmp_path)
+    e.notifier = FakeNotifier()
+    e.claude.result = StageResult(False, True, "", None, tmp_path / "t.json", "")
+    assert go(e) is True
+    assert e.notifier.sent[0].startswith("<b>\u26a0\ufe0f Round 1 incomplete</b> \u00b7 shop #7\n"
+                                         "agent session did not finish cleanly (timed out); ")
+
+
+def test_round_failure_is_headlined_failed(tmp_path):
+    e = prepare(tmp_path)
+    e.notifier = FakeNotifier()
+    e.run.responses["git push"] = CommandResult(1, "", "rejected")
+    assert go(e) is True
+    assert e.notifier.sent[0].startswith("<b>\u26a0\ufe0f Round 1 failed</b> \u00b7 shop #7\n")
 
 
 def test_round_telegram_failure_is_logged_not_fatal(tmp_path):

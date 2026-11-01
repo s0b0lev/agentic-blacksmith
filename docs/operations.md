@@ -58,9 +58,10 @@ Look in this order. Most questions are answered by the first four.
    docker compose ls
    ```
 
-If bootstrap failed, the issue gets a "Blacksmith bootstrap failed at step N (name)" comment,
-and `/var/log/blacksmith-bootstrap.log` ends with `bootstrap failed (exit N) at step N (name)`,
-usually after a `FATAL:` line. The most common causes are a failing `setup` command and an
+If bootstrap failed, the issue gets a "Blacksmith bootstrap failed at step N (name)" comment
+with a "Reason:" line (the `FATAL:` message, or the failing command's line number, with every
+secret value redacted), and `/var/log/blacksmith-bootstrap.log` ends with
+`bootstrap failed (exit N) at step N (name)` after that same `FATAL:` line. The most common causes are a failing `setup` command and an
 invalid `CLAUDE_CODE_OAUTH_TOKEN` (bootstrap runs a one-turn Claude smoke test in step 4). The
 lifetime timer is installed before anything that can fail, so a failed droplet still destroys
 itself after `limits.lifetime_hours`; send the self-destruct event (below) to remove it sooner.

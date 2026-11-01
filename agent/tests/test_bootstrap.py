@@ -204,6 +204,53 @@ def test_report_failure_posts_comment_with_step(tmp_path):
     assert body.endswith("<!-- blacksmith:bootstrap-failed -->")
 
 
+def test_report_failure_includes_the_redacted_reason(tmp_path):
+    fns = _functions(BOOTSTRAP.read_text(), "file_get", "report_failure")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "curl").write_text(f'#!/bin/sh\ncat > {tmp_path}/body\n')
+    (bindir / "curl").chmod(0o755)
+    env_file, conf = tmp_path / "env", tmp_path / "config"
+    env_file.write_text("BLACKSMITH_GITHUB_TOKEN=ghp_x\nCLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat-SECRET\nFIGMA_API_KEY=\n")
+    conf.write_text("ISSUE=12\nREPO=o/r\n")
+    reason = "Claude Code smoke test failed; token sk-ant-oat-SECRET rejected (output: <b>x</b>)"
+    script = (f"set -euo pipefail\nENV_FILE={env_file}\nCONF={conf}\nLOG=/var/log/b.log\n"
+              f"LIFETIME_HOURS=24\nSTEP_N=4\nSTEP='claude code'\nFATAL_MSG='{reason}'\n"
+              f"log() {{ :; }}\n{fns}report_failure\n")
+    proc = subprocess.run(["bash", "-c", script], text=True, capture_output=True,
+                          env={"PATH": f"{bindir}:/usr/bin:/bin"})
+    assert proc.returncode == 0, proc.stderr
+    body = json.loads((tmp_path / "body").read_text())["body"]
+    assert "sk-ant-oat-SECRET" not in body and "ghp_x" not in body
+    assert ("\n\nReason: Claude Code smoke test failed; token <redacted> rejected "
+            "(output: <b>x</b>)\n\n") in body
+    assert body.endswith("<!-- blacksmith:bootstrap-failed -->")
+
+
+def test_report_failure_without_a_reason_keeps_the_short_comment(tmp_path):
+    fns = _functions(BOOTSTRAP.read_text(), "file_get", "report_failure")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "curl").write_text(f'#!/bin/sh\ncat > {tmp_path}/body\n')
+    (bindir / "curl").chmod(0o755)
+    env_file, conf = tmp_path / "env", tmp_path / "config"
+    env_file.write_text("BLACKSMITH_GITHUB_TOKEN=ghp_x\n")
+    conf.write_text("ISSUE=12\nREPO=o/r\n")
+    script = (f"set -euo pipefail\nENV_FILE={env_file}\nCONF={conf}\nLOG=/var/log/b.log\n"
+              f"LIFETIME_HOURS=24\nSTEP_N=7\nSTEP='setup commands'\nlog() {{ :; }}\n{fns}report_failure\n")
+    proc = subprocess.run(["bash", "-c", script], text=True, capture_output=True,
+                          env={"PATH": f"{bindir}:/usr/bin:/bin"})
+    assert proc.returncode == 0, proc.stderr
+    body = json.loads((tmp_path / "body").read_text())["body"]
+    assert "Reason:" not in body and "self-destruct after 24 h.\n\n<!-- blacksmith" in body
+
+
+def test_die_and_the_err_trap_record_the_reason():
+    text = BOOTSTRAP.read_text()
+    assert re.search(r'^die\(\) \{ FATAL_MSG="\$\*"; log "FATAL: \$\*"; exit 1; \}$', text, re.M)
+    assert 'trap \'FATAL_MSG="command failed (exit $?) at line $LINENO"; log "$FATAL_MSG"\' ERR' in text
+
+
 def test_bootstrap_smoke_tests_claude_token():
     text = BOOTSTRAP.read_text()
     install = text.index("claude.ai/install.sh")

@@ -19,7 +19,7 @@ exec > >(tee -a "$LOG") 2>&1
 cd /
 
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
-die() { log "FATAL: $*"; exit 1; }
+die() { FATAL_MSG="$*"; log "FATAL: $*"; exit 1; }
 
 STEP_N=0
 STEP=prelude
@@ -31,16 +31,36 @@ step() {
 
 # Best effort: tell the issue that bootstrap failed. Never changes the exit status.
 report_failure() {
-  local token repo issue hours body
+  local token repo issue hours body payload
   token="$(file_get "$ENV_FILE" BLACKSMITH_GITHUB_TOKEN 2>/dev/null || true)"
   repo="$(file_get "$CONF" REPO 2>/dev/null || true)"
   issue="$(file_get "$CONF" ISSUE 2>/dev/null || true)"
   hours="${LIFETIME_HOURS:-168}"
   [ -n "$token" ] && [ -n "$repo" ] && [[ "$issue" =~ ^[0-9]+$ ]] || return 0
-  body="Blacksmith bootstrap failed at step $STEP_N ($STEP): see $LOG on the droplet. The server will self-destruct after $hours h.
-
-<!-- blacksmith:bootstrap-failed -->"
-  python3 -I -c 'import json, sys; print(json.dumps({"body": sys.argv[1]}))' "$body" \
+  body="Blacksmith bootstrap failed at step $STEP_N ($STEP): see $LOG on the droplet. The server will self-destruct after $hours h."
+  # The reason (die's message, or the ERR trap's line) goes in too, with every secret value
+  # from the env file replaced, so the comment never has to be read on the droplet first.
+  payload="$(python3 -I - "$body" "${FATAL_MSG:-}" "$ENV_FILE" <<'PY'
+import json, sys
+body, reason, env_file = sys.argv[1:4]
+if reason.strip():
+    secrets = []
+    try:
+        for line in open(env_file, encoding="utf-8", errors="replace"):
+            key, sep, value = line.rstrip("\n").partition("=")
+            value = value.strip().strip("'\"")
+            if sep and len(value) >= 4:
+                secrets.append(value)
+    except OSError:
+        pass
+    for value in sorted(secrets, key=len, reverse=True):
+        reason = reason.replace(value, "<redacted>")
+    body += "\n\nReason: " + reason.strip()[:1000]
+body += "\n\n<!-- blacksmith:bootstrap-failed -->"
+print(json.dumps({"body": body}))
+PY
+)"
+  printf '%s' "$payload" \
     | curl -fsS --max-time 30 -o /dev/null -X POST \
         -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
         --data @- "https://api.github.com/repos/$repo/issues/$issue/comments" \
@@ -55,7 +75,7 @@ on_exit() {
   fi
   exit "$status"
 }
-trap 'log "command failed (exit $?) at line $LINENO"' ERR
+trap 'FATAL_MSG="command failed (exit $?) at line $LINENO"; log "$FATAL_MSG"' ERR
 trap on_exit EXIT
 
 # KEY=value lookup that strips one layer of quotes, like blacksmith.read_config_file.

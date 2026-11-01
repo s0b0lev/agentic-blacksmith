@@ -46,6 +46,13 @@ on:
         description: Telegram chat id that receives the run's notifications; empty disables them.
         type: string
         default: ""
+      after_unlabel:
+        description: >-
+          True when the caller tears down because the label was removed. The job then checks,
+          once it holds the issue's concurrency group, that the label is still absent: a relabel
+          whose spin-up already ran ahead of this job gets to keep its new droplet.
+        type: boolean
+        default: false
     secrets:
       DIGITALOCEAN_TOKEN:
         required: true
@@ -177,13 +184,32 @@ jobs:
             echo "TF_VAR_base_branch=$base" >> "$GITHUB_ENV"
           fi
 
+      - name: Skip when the label is back
+        id: label
+        if: inputs.after_unlabel
+        env:
+          GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
+        run: |
+          # This job queues behind a relabel's spin-up in the shared concurrency group, so by
+          # the time it runs the issue may carry the label again, with a fresh droplet that
+          # the spin-up just created. Destroying that would be the wrong droplet.
+          label="${TF_VAR_label:-blacksmith}"  # from "Read config"; Terraform's default otherwise
+          if gh api "repos/$REPO/issues/$ISSUE" --jq '.labels[].name' | grep -qxF -- "$label"; then
+            echo "::notice::issue #$ISSUE carries the $label label again; leaving its droplet alone"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Terraform
+        if: steps.label.outputs.skip != 'true'
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.8"
           terraform_wrapper: false
 
       - name: Terraform init
+        if: steps.label.outputs.skip != 'true'
         working-directory: template/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
@@ -205,6 +231,7 @@ jobs:
             -backend-config="use_path_style=false"
 
       - name: Select issue workspace
+        if: steps.label.outputs.skip != 'true'
         id: ws
         working-directory: template/terraform
         env:
@@ -224,7 +251,7 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Terraform destroy
-        if: steps.ws.outputs.skip != 'true'
+        if: steps.ws.outputs.skip != 'true' && steps.label.outputs.skip != 'true'
         working-directory: template/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
@@ -250,7 +277,7 @@ jobs:
         run: terraform destroy -auto-approve -input=false
 
       - name: Delete issue workspace
-        if: steps.ws.outputs.skip != 'true'
+        if: steps.ws.outputs.skip != 'true' && steps.label.outputs.skip != 'true'
         working-directory: template/terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
@@ -258,13 +285,13 @@ jobs:
         run: terraform workspace select default && terraform workspace delete "issue-$ISSUE"
 
       - name: Delete assets branch
-        if: steps.ws.outputs.skip != 'true'
+        if: steps.ws.outputs.skip != 'true' && steps.label.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
         run: gh api -X DELETE "repos/$REPO/git/refs/heads/blacksmith-assets/issue-$ISSUE" || true
 
       - name: Delete Grafana dashboard
-        if: steps.ws.outputs.skip != 'true'
+        if: steps.ws.outputs.skip != 'true' && steps.label.outputs.skip != 'true'
         env:
           GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
         run: |
@@ -275,7 +302,7 @@ jobs:
           fi
 
       - name: Post tear-down comment
-        if: steps.ws.outputs.skip != 'true'
+        if: steps.ws.outputs.skip != 'true' && steps.label.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.BLACKSMITH_GITHUB_TOKEN }}
         run: |

@@ -191,6 +191,33 @@ def test_tear_down_skips_only_when_workspace_is_absent():
     assert "||" not in select and not select.lstrip().startswith(("if ", "!"))
 
 
+def test_tear_down_leaves_a_relabeled_issue_alone():
+    doc = _load(TEAR_DOWN)
+    flag = _on(doc)["workflow_call"]["inputs"]["after_unlabel"]
+    assert flag["type"] == "boolean" and flag["default"] is False
+    steps = doc["jobs"]["tear-down"]["steps"]
+    names = [s["name"] for s in steps]
+    check = next(s for s in steps if s.get("id") == "label")
+    assert check["if"] == "inputs.after_unlabel"
+    assert names.index(check["name"]) > names.index("Read config")  # exports TF_VAR_label
+    assert check["env"]["GH_TOKEN"] == "${{ secrets.BLACKSMITH_GITHUB_TOKEN }}"
+    assert "gh api \"repos/$REPO/issues/$ISSUE\" --jq '.labels[].name'" in check["run"]
+    assert 'label="${TF_VAR_label:-blacksmith}"' in check["run"]
+    assert 'grep -qxF -- "$label"' in check["run"]
+    assert 'echo "skip=true" >> "$GITHUB_OUTPUT"' in check["run"]
+    # Everything after the check that touches state or talks to the world is gated on it.
+    after = steps[names.index(check["name"]) + 1:]
+    assert [s["name"] for s in after][:2] == ["Set up Terraform", "Terraform init"]
+    for s in after:
+        assert "steps.label.outputs.skip != 'true'" in s.get("if", ""), s["name"]
+
+
+def test_adopter_example_tears_down_after_unlabel_with_the_flag():
+    tear = _load(ADOPTER)["jobs"]["tear-down"]
+    assert tear["with"]["after_unlabel"] == (
+        "${{ github.event_name == 'issues' && github.event.action == 'unlabeled' }}")
+
+
 def test_actionlint():
     actionlint = shutil.which("actionlint")
     if actionlint is None:

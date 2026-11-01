@@ -245,6 +245,10 @@ terraform workspace select default && terraform workspace delete issue-12
   for one issue share a concurrency group, and GitHub keeps only one queued job per group. A
   running tear-down is never cancelled. If a droplet survives an unlabel, close the pull
   request or the issue, or send the dispatch event.
+- **An unlabel followed by a relabel keeps the new droplet.** The unlabel's tear-down can
+  queue behind the relabel's spin-up; when it runs, it sees the label back on the issue and
+  skips ("leaving its droplet alone" in the run log) instead of destroying the droplet the
+  spin-up just created. The gap between the two events does not matter.
 - **The lifetime timer counts from boot.** Rebooting the droplet restarts the clock.
 - **Each round comment ends with `took <time>`,** the wall clock of that round.
 - **Review rounds consume comments even when the agent session fails.** The round comment

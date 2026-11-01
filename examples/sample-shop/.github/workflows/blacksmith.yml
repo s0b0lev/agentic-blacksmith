@@ -92,6 +92,7 @@ jobs:
     uses: s0b0lev/agentic-blacksmith/.github/workflows/tear-down.yml@v1
     with:
       issue: ${{ fromJSON(needs.resolve.outputs.issue) }}
+      after_unlabel: ${{ github.event_name == 'issues' && github.event.action == 'unlabeled' }}
       state_bucket: ${{ vars.BLACKSMITH_STATE_BUCKET }}
       preview_zone: ${{ vars.BLACKSMITH_PREVIEW_ZONE }}
       telegram_chat_id: ${{ vars.BLACKSMITH_TELEGRAM_CHAT_ID }}

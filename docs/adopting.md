@@ -313,6 +313,7 @@ jobs:
     uses: s0b0lev/agentic-blacksmith/.github/workflows/tear-down.yml@v1
     with:
       issue: ${{ fromJSON(needs.resolve.outputs.issue) }}
+      after_unlabel: ${{ github.event_name == 'issues' && github.event.action == 'unlabeled' }}
       state_bucket: ${{ vars.BLACKSMITH_STATE_BUCKET }}
       preview_zone: ${{ vars.BLACKSMITH_PREVIEW_ZONE }}
       telegram_chat_id: ${{ vars.BLACKSMITH_TELEGRAM_CHAT_ID }}
@@ -337,6 +338,8 @@ Things you may change under `with:` in both the `spin-up` and `tear-down` jobs:
 - `base_branch` (default: the repository's default branch): what the work branch starts from
   and the pull request targets.
 - `spaces_endpoint` (default `https://fra1.digitaloceanspaces.com`): see step 3.
+- `after_unlabel` (tear-down only): keep it as in the example. It tells the tear-down that
+  the label was removed, so it leaves the droplet alone when the label is already back.
 - `template_ref` (default `v1`) and `template_repo` (default `s0b0lev/agentic-blacksmith`):
   set both if you run your own fork of this template, and change the `uses:` lines to match.
 

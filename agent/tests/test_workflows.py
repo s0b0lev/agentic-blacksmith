@@ -321,3 +321,53 @@ def test_adopter_example_maps_grafana_secrets_into_both_calls():
     for name in ("spin-up", "tear-down"):
         for secret in ("GRAFANA_CLOUD_TOKEN", "GRAFANA_API_TOKEN"):
             assert jobs[name]["secrets"][secret] == f"${{{{ secrets.{secret} }}}}"
+
+
+TF_NO_OUTPUTS = """╷
+│ Warning: No outputs found
+│
+│ The state file either has no outputs defined, or all the defined outputs
+│ are empty.
+╵
+"""
+
+
+def _run_dashboard_step(tmp_path: Path, terraform_stdout: str) -> tuple[subprocess.CompletedProcess, str]:
+    """Run the "Grafana dashboard" step with `dashboard create` failing and a stubbed terraform."""
+    steps = _load(SPIN_UP)["jobs"]["spin-up"]["steps"]
+    script = next(s for s in steps if s.get("name") == "Grafana dashboard")["run"]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "terraform").write_text("#!/bin/sh\ncat <<'EOT'\n" + terraform_stdout + "EOT\n")
+    (bin_dir / "python3").write_text("#!/bin/sh\necho 'grafana: 503' >&2\nexit 1\n")
+    (bin_dir / "gh").write_text("#!/bin/sh\necho true\n")
+    for f in bin_dir.iterdir():
+        f.chmod(0o755)
+    github_env = tmp_path / "github_env"
+    github_env.touch()
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin", "GITHUB_ENV": str(github_env),
+        "OBS_ENABLED": "true", "GRAFANA_URL": "https://g.example", "GRAFANA_API_TOKEN": "t",
+        "GRAFANA_CLOUD_TOKEN": "t", "OBS_PUBLIC": "auto", "PROM_URL": "https://p.example",
+        "REPO": "acme/shop", "ISSUE": "9", "BRANCH": "blacksmith/issue-9", "CONFIG_PATH": "b.yml",
+        "LOKI_DS_UID": "L", "PROM_DS_UID": "P", "AGENT_STREAM": "true",
+    }
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script],
+        env=env, capture_output=True, text=True, cwd=tmp_path,
+    )
+    return result, github_env.read_text()
+
+
+def test_dashboard_step_ignores_terraform_warning_in_a_fresh_workspace(tmp_path):
+    result, github_env = _run_dashboard_step(tmp_path, TF_NO_OUTPUTS)
+    assert result.returncode == 0, result.stderr
+    assert github_env == "DASHBOARD_URL=\n"
+    assert "no previous dashboard link to keep" in result.stdout
+
+
+def test_dashboard_step_keeps_a_previous_dashboard_link(tmp_path):
+    result, github_env = _run_dashboard_step(tmp_path, "https://g.example/d/bs-9-x\n")
+    assert result.returncode == 0, result.stderr
+    assert github_env == "DASHBOARD_URL=https://g.example/d/bs-9-x\n"
+    assert "previous dashboard link was kept: https://g.example/d/bs-9-x" in result.stdout

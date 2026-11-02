@@ -316,7 +316,10 @@ jobs:
             if [ "$rc" -eq 0 ] && [ -n "$url" ]; then
               DASHBOARD_URL="$url"
             else
-              DASHBOARD_URL="$(terraform output -raw dashboard_url 2>/dev/null || true)"
+              # A fresh workspace has no outputs: terraform then prints a multi-line warning
+              # on stdout and exits 0, so keep the value only when it is a link.
+              previous="$(terraform output -raw dashboard_url 2>/dev/null || true)"
+              case "$previous" in https://*) DASHBOARD_URL="$previous" ;; esac
               if [ -n "$DASHBOARD_URL" ]; then
                 echo "::warning::Grafana dashboard not created: dashboard create exited $rc (see the log above); the previous dashboard link was kept: $DASHBOARD_URL"
               else

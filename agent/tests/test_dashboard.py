@@ -3,7 +3,8 @@ import json
 import pytest
 
 from blacksmith.dashboard import (
-    UID_MAX, Grafana, GrafanaError, build_dashboard, dashboard_link, dashboard_uid, resolve_public,
+    RETRY_WAITS_S, UID_MAX, Grafana, GrafanaError, build_dashboard, dashboard_link, dashboard_uid,
+    resolve_public,
 )
 
 
@@ -173,3 +174,33 @@ def test_every_panel_has_a_unique_integer_id_for_public_queries():
     walk(d["panels"])
     assert ids and all(isinstance(i, int) for i in ids)
     assert len(ids) == len(set(ids))
+
+
+LOADING = {"message": "Your instance is loading, and will be ready shortly."}
+
+
+def test_request_waits_for_a_loading_grafana_cloud_stack():
+    http = FakeHttp([(503, LOADING), (503, LOADING), (200, {"uid": "bs-12-abc"})])
+    waits = []
+    g = Grafana("https://g.example", "tok", http, sleep=waits.append)
+    assert g.upsert_dashboard({"uid": "bs-12-abc"}) == "bs-12-abc"
+    assert len(http.calls) == 3
+    assert waits == list(RETRY_WAITS_S[:2])
+
+
+def test_request_gives_up_when_grafana_keeps_loading():
+    http = FakeHttp([(503, LOADING)] * (len(RETRY_WAITS_S) + 1))
+    g = Grafana("https://g.example", "tok", http, sleep=lambda s: None)
+    with pytest.raises(GrafanaError) as exc:
+        g.upsert_dashboard({"uid": "u"})
+    assert "503" in str(exc.value) and "loading" in str(exc.value)
+    assert len(http.calls) == len(RETRY_WAITS_S) + 1
+
+
+def test_request_does_not_retry_other_errors():
+    http = FakeHttp([(500, {"message": "boom"})])
+    waits = []
+    g = Grafana("https://g.example", "tok", http, sleep=waits.append)
+    with pytest.raises(GrafanaError):
+        g.upsert_dashboard({"uid": "u"})
+    assert waits == [] and len(http.calls) == 1

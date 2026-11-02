@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -11,6 +12,10 @@ from dataclasses import dataclass, field
 
 UID_MAX = 40  # Grafana's limit on a dashboard uid
 TIMEOUT_S = 30
+# A paused Grafana Cloud stack answers 503 "Your instance is loading" while it wakes, which
+# takes about a minute. Waits between retries, in seconds.
+RETRY_WAITS_S = (10, 20, 30, 60)
+_RETRY_STATUSES = {502, 503, 504}
 
 Http = Callable[[str, str, bytes | None, Mapping[str, str]], tuple[int, bytes]]
 
@@ -172,8 +177,20 @@ class Grafana:
     url: str
     token: str = field(repr=False)
     http: Http = _urllib_http
+    sleep: Callable[[float], None] = time.sleep
 
     def _request(self, method: str, path: str, body: dict | None = None) -> dict:
+        """One API call, retried while the stack answers 502/503/504."""
+        for wait in RETRY_WAITS_S:
+            try:
+                return self._once(method, path, body)
+            except _StatusError as exc:
+                if exc.status not in _RETRY_STATUSES:
+                    raise
+            self.sleep(wait)
+        return self._once(method, path, body)
+
+    def _once(self, method: str, path: str, body: dict | None = None) -> dict:
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",

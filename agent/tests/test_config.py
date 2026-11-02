@@ -239,3 +239,19 @@ def test_preview_auth_key_is_rejected():
     with pytest.raises(ConfigError) as exc:
         parse_config(data)
     assert "preview.auth: unknown key" in str(exc.value).splitlines()
+
+
+@pytest.mark.parametrize("login", ["admin/login", "httpfoo/login", "ftp://x/login"])
+def test_admin_login_must_be_a_path_or_http_url(login):
+    data = minimal()
+    data["preview"]["admin"] = {"create": "x", "login": login}
+    with pytest.raises(ConfigError) as exc:
+        parse_config(data)
+    assert "preview.admin.login: must be a path starting with / or an http(s) URL" in str(exc.value).splitlines()
+
+
+@pytest.mark.parametrize("login", ["/admin/login", "http://x/login", "https://x/login"])
+def test_admin_login_accepts_paths_and_http_urls(login):
+    data = minimal()
+    data["preview"]["admin"] = {"create": "x", "login": login}
+    assert parse_config(data).preview.admin.login == login

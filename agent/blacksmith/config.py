@@ -256,6 +256,9 @@ def _reset(ctx: _Ctx, raw: Any) -> dict[str, tuple[str, ...]]:
     return {k: tuple(v) for k, v in raw.items()}
 
 
+_LOGIN_PREFIXES = ("/", "http://", "https://")
+
+
 def _admin(ctx: _Ctx, raw: Any) -> Admin | None:
     """``preview.admin``: at least one of ``create`` or ``password`` must set the password."""
     if raw is None:
@@ -269,6 +272,8 @@ def _admin(ctx: _Ctx, raw: Any) -> Admin | None:
     )
     if admin.create is None and admin.password is None:
         ctx.err("preview.admin", "needs create or password")
+    if admin.login is not None and not admin.login.startswith(_LOGIN_PREFIXES):
+        ctx.err("preview.admin.login", "must be a path starting with / or an http(s) URL")
     return admin
 
 

@@ -331,7 +331,7 @@ def _compose_shell(preview: Preview, files: list[Path], compose_path: Path, comm
 def _login_url(host: str, login: str | None) -> str | None:
     if login is None:
         return None
-    return login if login.startswith("http") else f"https://{host}{login}"
+    return login if login.startswith(("http://", "https://")) else f"https://{host}{login}"
 
 
 def deploy(

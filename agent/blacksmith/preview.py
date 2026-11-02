@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 import secrets
@@ -100,9 +99,12 @@ def render_env(
 
 
 @dataclass(frozen=True)
-class BasicAuth:
+class Login:
+    """The admin login the agents and reviewers sign in with."""
+
     user: str
-    password_hash: str
+    password: str
+    url: str | None  # the login page, when the config names one
 
 
 def compose_service_names(compose_path: Path) -> list[str]:
@@ -165,15 +167,9 @@ def render_extra(preview: Preview) -> str | None:
 _REWRITE = re.compile(r"^(?P<prefix>/\S*?)/\* -> /\*$")
 
 
-def render_caddyfile(preview: Preview, host: str, auth: BasicAuth | None) -> str:
-    """Caddyfile with optional basic auth and one ``handle`` block per route."""
+def render_caddyfile(preview: Preview, host: str) -> str:
+    """Caddyfile with one ``handle`` block per route."""
     out = [f"{host} {{"]
-    if auth:
-        out += [
-            "    basic_auth {",
-            f"        {auth.user} {auth.password_hash}",
-            "    }",
-        ]
     for route in preview.routes:
         out.append(f"    handle {route.path} {{")
         if route.rewrite:
@@ -198,19 +194,15 @@ class PreviewContext:
 class PreviewResult:
     ok: bool
     url: str
-    auth: tuple[str, str] | None
+    login: Login | None
     error: str | None
     diagnostics: str
 
 
-def _urllib_status(url: str, auth: tuple[str, str] | None) -> int:
+def _urllib_status(url: str) -> int:
     """HTTP status of a GET; 0 when the server cannot be reached."""
-    request = urllib.request.Request(url)
-    if auth:
-        token = base64.b64encode(f"{auth[0]}:{auth[1]}".encode()).decode()
-        request.add_header("Authorization", f"Basic {token}")
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with urllib.request.urlopen(url, timeout=10) as response:
             return response.status
     except urllib.error.HTTPError as err:
         return err.code
@@ -252,8 +244,6 @@ def _write_inputs(
     preview: Preview,
     ctx: PreviewContext,
     compose_path: Path,
-    auth: tuple[str, str] | None,
-    password_hash: str | None,
     rand: Callable[[], str],
     existing_env: Mapping[str, str],
 ) -> tuple[Path, dict[str, str], bool]:
@@ -269,8 +259,7 @@ def _write_inputs(
     values, generated = _env_values(example, preview.env, ctx.host, rand, existing_env)
     env_path.write_text(_format_env(values))
     caddyfile = ctx.work_dir / "Caddyfile"
-    basic = BasicAuth(auth[0], password_hash) if auth and password_hash else None
-    text = render_caddyfile(preview, ctx.host, basic)
+    text = render_caddyfile(preview, ctx.host)
     previous = caddyfile.read_text() if caddyfile.exists() else None
     caddyfile.write_text(text)
     override = render_override(
@@ -294,21 +283,19 @@ def _fail(
     step: str,
     output: str,
     error: str,
-    auth: tuple[str, str] | None,
     url: str,
 ) -> PreviewResult:
     parts = [f"== {step} ==\n{output}"]
     for label, extra in (("ps", ["ps"]), ("logs", ["logs", "--tail", "100"])):
         res = run(base + extra, cwd=cwd, timeout=60)
         parts.append(f"== {label} ==\n{res.stdout}{res.stderr}")
-    return PreviewResult(False, url, auth, error, "\n".join(parts))
+    return PreviewResult(False, url, None, error, "\n".join(parts))
 
 
 def _wait_ready(
     url: str,
-    auth: tuple[str, str] | None,
     timeout_s: int,
-    http_get: Callable[[str, tuple[str, str] | None], int],
+    http_get: Callable[[str], int],
     sleep: Callable[[float], None],
     clock: Callable[[], float],
 ) -> int | None:
@@ -316,7 +303,7 @@ def _wait_ready(
     deadline = clock() + timeout_s
     while True:
         try:
-            status = http_get(url, auth)
+            status = http_get(url)
         except Exception:
             status = 0
         if 200 <= status < 400:
@@ -336,7 +323,7 @@ def deploy(
     run: CommandRunner,
     *,
     ready_timeout_s: int = 600,
-    http_get: Callable[[str, tuple[str, str] | None], int] = _urllib_status,
+    http_get: Callable[[str], int] = _urllib_status,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     rand: Callable[[], str] = secrets.token_urlsafe,
@@ -350,31 +337,13 @@ def deploy(
         return PreviewResult(False, url, None, conflict, "")
 
     stored = _load_secrets(ctx.work_dir)
-    auth: tuple[str, str] | None = None
-    password_hash = None
-    if preview.auth == "basic":
-        saved = stored.get("auth")
-        if isinstance(saved, list) and len(saved) == 3 and all(isinstance(v, str) for v in saved):
-            auth, password_hash = (saved[0], saved[1]), saved[2]
-        else:
-            auth = ("preview", rand())
-            cmd = ["docker", "run", "--rm", "caddy:2", "caddy", "hash-password",
-                   "--plaintext", auth[1]]  # fmt: skip
-            res = run(cmd, cwd=ctx.repo_root, timeout=300)
-            if res.code != 0:
-                diag = f"== hash-password ==\n{_out(res)}"
-                return PreviewResult(False, url, None, "hash-password failed", diag)
-            password_hash = res.stdout.strip()
     existing_env = stored.get("env_values")
     if not isinstance(existing_env, dict):
         existing_env = {}
     env_path, generated, caddy_changed = _write_inputs(
-        preview, ctx, compose_path, auth, password_hash, rand, existing_env
+        preview, ctx, compose_path, rand, existing_env
     )
-    _save_secrets(ctx.work_dir, {
-        "env_values": generated,
-        "auth": [auth[0], auth[1], password_hash] if auth and password_hash else None,
-    })
+    _save_secrets(ctx.work_dir, {"env_values": generated})
 
     # No --project-directory: compose resolves .env, env_file and relative paths
     # against the first file's directory, the same for `up` and for the seed.
@@ -404,14 +373,14 @@ def deploy(
         res = run(cmd, cwd=ctx.repo_root, timeout=timeout)
         if res.code != 0:
             error = f"{step} failed (exit {res.code})"
-            return _fail(run, base, ctx.repo_root, step, _out(res), error, auth, url)
+            return _fail(run, base, ctx.repo_root, step, _out(res), error, url)
 
-    last = _wait_ready(url, auth, ready_timeout_s, http_get, sleep, clock)
+    last = _wait_ready(url, ready_timeout_s, http_get, sleep, clock)
     if last is not None:
         error = f"ready probe timed out after {ready_timeout_s}s (last status {last})"
-        return _fail(run, base, ctx.repo_root, "ready", error, error, auth, url)
+        return _fail(run, base, ctx.repo_root, "ready", error, error, url)
 
-    meta = {"url": url, "host": ctx.host, "auth": list(auth) if auth else None,
-            "env_path": str(env_path)}  # fmt: skip
+    login: Login | None = None
+    meta = {"url": url, "host": ctx.host, "login": None, "env_path": str(env_path)}
     (ctx.work_dir / "preview.json").write_text(json.dumps(meta, indent=2))
-    return PreviewResult(True, url, auth, None, "")
+    return PreviewResult(True, url, login, None, "")

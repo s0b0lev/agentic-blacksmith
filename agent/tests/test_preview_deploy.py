@@ -1,5 +1,6 @@
 import json
 import shlex
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,9 @@ class Clock:
 
 @pytest.fixture
 def cfg():
-    return load_config(EXAMPLE)
+    # Without the admin block: Task 3's admin tests use ``admin_cfg``.
+    sample = load_config(EXAMPLE)
+    return replace(sample, preview=replace(sample.preview, admin=None))
 
 
 @pytest.fixture
@@ -60,7 +63,7 @@ def ctx(repo, tmp_path):
     return PreviewContext(repo_root=repo, host=HOST, work_dir=work)
 
 
-def _run(cfg, ctx, fake_runner, status=lambda url, auth: 200, **kw):
+def _run(cfg, ctx, fake_runner, status=lambda url: 200, **kw):
     clock = kw.pop("clock", Clock())
     return deploy(
         cfg,
@@ -84,7 +87,6 @@ def _base(cfg, ctx):
 
 
 def test_deploy_command_sequence_sample(cfg, ctx, fake_runner):
-    fake_runner.responses["docker run"] = CommandResult(0, "HASH\n", "")
     result = _run(cfg, ctx, fake_runner)
     assert result.ok and result.error is None
     base = _base(cfg, ctx)
@@ -97,23 +99,21 @@ def test_deploy_command_sequence_sample(cfg, ctx, fake_runner):
         f"&& cd {shlex.quote(str(ctx.repo_root / 'ops'))} && {cfg.preview.seed}"
     )
     assert fake_runner.calls == [
-        ["docker", "run", "--rm", "caddy:2", "caddy", "hash-password",
-         "--plaintext", "rnd"],
         base + ["up", "-d", "--build", "--wait", "db", "minio", "redis", "meilisearch"],
         ["bash", "-lc", seed],
         base + ["up", "-d", "--build", "--wait"],
     ]  # fmt: skip
     assert all(k["cwd"] == ctx.repo_root for k in fake_runner.kwargs)
-    assert [k.get("timeout") for k in fake_runner.kwargs] == [300, 1800, 900, 1800]
+    assert [k.get("timeout") for k in fake_runner.kwargs] == [1800, 900, 1800]
     for call in fake_runner.calls:
         if "-p" in call:
             assert call[call.index("-p") + 1] == "blacksmith-preview"
     caddyfile = (ctx.work_dir / "Caddyfile").read_text()
-    assert f"{HOST} {{" in caddyfile and "preview HASH" in caddyfile
+    assert f"{HOST} {{" in caddyfile and "basic_auth" not in caddyfile
     assert str(ctx.work_dir / "Caddyfile") in (
         ctx.work_dir / "compose.override.yml"
     ).read_text()
-    assert result.auth == ("preview", "rnd")
+    assert result.login is None
     assert result.url == f"https://{HOST}/"
 
 
@@ -137,7 +137,7 @@ def test_env_written_next_to_compose_file(cfg, ctx, fake_runner):
     assert meta == {
         "url": result.url,
         "host": HOST,
-        "auth": ["preview", "rnd"],
+        "login": None,
         "env_path": str(env_path),
     }
 
@@ -145,7 +145,7 @@ def test_env_written_next_to_compose_file(cfg, ctx, fake_runner):
 def test_ready_poll_until_2xx(cfg, ctx, fake_runner):
     statuses = iter([502, 502, 200])
     clock = Clock()
-    result = _run(cfg, ctx, fake_runner, status=lambda u, a: next(statuses), clock=clock)
+    result = _run(cfg, ctx, fake_runner, status=lambda u: next(statuses), clock=clock)
     assert result.ok
     assert clock.sleeps == [5, 5]
 
@@ -153,20 +153,20 @@ def test_ready_poll_until_2xx(cfg, ctx, fake_runner):
 def test_ready_probe_exception_counts_as_not_ready(cfg, ctx, fake_runner):
     calls = []
 
-    def probe(url, auth):
-        calls.append((url, auth))
+    def probe(url):
+        calls.append(url)
         if len(calls) == 1:
             raise OSError("refused")
         return 301
 
     assert _run(cfg, ctx, fake_runner, status=probe).ok
-    assert calls == [(f"https://{HOST}/", ("preview", "rnd"))] * 2
+    assert calls == [f"https://{HOST}/"] * 2
 
 
 def test_ready_timeout_returns_diagnostics(cfg, ctx, fake_runner):
     fake_runner.responses[" ".join(_base(cfg, ctx) + ["ps"])] = CommandResult(0, "PS-OUT", "")
     fake_runner.responses[" ".join(_base(cfg, ctx) + ["logs"])] = CommandResult(0, "LOG-OUT", "")
-    result = _run(cfg, ctx, fake_runner, status=lambda u, a: 502, ready_timeout_s=10)
+    result = _run(cfg, ctx, fake_runner, status=lambda u: 502, ready_timeout_s=10)
     assert result.ok is False
     assert "ready probe timed out after 10s (last status 502)" in result.error
     assert "PS-OUT" in result.diagnostics and "LOG-OUT" in result.diagnostics
@@ -183,27 +183,7 @@ def test_failed_up_returns_error_without_seed(cfg, ctx, fake_runner):
     assert any(c[-3:] == ["logs", "--tail", "100"] for c in fake_runner.calls)
 
 
-def test_failed_hash_brings_up_nothing(cfg, ctx, fake_runner):
-    fake_runner.responses["docker run"] = CommandResult(1, "", "no docker")
-    result = _run(cfg, ctx, fake_runner)
-    assert result.ok is False and "no docker" in result.diagnostics
-    assert len(fake_runner.calls) == 1
-
-
-def test_no_auth_when_config_none(cfg, ctx, fake_runner):
-    from dataclasses import replace
-
-    cfg = replace(cfg, preview=replace(cfg.preview, auth="none"))
-    result = _run(cfg, ctx, fake_runner)
-    assert result.ok and result.auth is None
-    assert not any(c[:2] == ["docker", "run"] for c in fake_runner.calls)
-    assert "basic_auth" not in (ctx.work_dir / "Caddyfile").read_text()
-    assert json.loads((ctx.work_dir / "preview.json").read_text())["auth"] is None
-
-
 def test_no_seed_when_none(cfg, ctx, fake_runner):
-    from dataclasses import replace
-
     cfg = replace(cfg, preview=replace(cfg.preview, seed=None))
     assert _run(cfg, ctx, fake_runner).ok
     assert not any(c[0] == "bash" for c in fake_runner.calls)
@@ -260,8 +240,7 @@ def test_final_up_failure_returns_diagnostics(cfg, ctx, fake_runner):
     assert any(c[0] == "bash" for c in fake_runner.calls)  # seed ran first
 
 
-def test_second_deploy_reuses_env_values_and_auth(cfg, ctx, fake_runner):
-    fake_runner.responses["docker run"] = CommandResult(0, "HASH\n", "")
+def test_second_deploy_reuses_env_values(cfg, ctx, fake_runner):
     counter = iter(range(100))
 
     def rand():
@@ -269,7 +248,7 @@ def test_second_deploy_reuses_env_values_and_auth(cfg, ctx, fake_runner):
 
     def deploy_once():
         clock = Clock()
-        return deploy(cfg, ctx, fake_runner, http_get=lambda u, a: 200,
+        return deploy(cfg, ctx, fake_runner, http_get=lambda u: 200,
                       sleep=clock.sleep, clock=clock, rand=rand)
 
     first = deploy_once()
@@ -280,19 +259,16 @@ def test_second_deploy_reuses_env_values_and_auth(cfg, ctx, fake_runner):
     assert first.ok and second.ok
     assert (ctx.repo_root / "ops/.env").read_text() == env1
     assert (ctx.work_dir / "Caddyfile").read_text() == caddy1
-    assert second.auth == first.auth
+    assert first.login is None and second.login is None
     new_calls = fake_runner.calls[calls_before:]
-    assert not any(c[:2] == ["docker", "run"] for c in new_calls)
     assert not any("--force-recreate" in c for c in new_calls)
     secrets = json.loads((ctx.work_dir / "preview-secrets.json").read_text())
-    assert secrets["auth"] == [first.auth[0], first.auth[1], "HASH"]
-    assert secrets["env_values"] == {"SECRET_KEY": "r1"}
+    assert "auth" not in secrets
+    assert secrets["env_values"] == {"SECRET_KEY": "r0"}
     assert (ctx.work_dir / "preview-secrets.json").stat().st_mode & 0o777 == 0o600
 
 
 def test_changed_caddyfile_recreates_caddy(cfg, ctx, fake_runner):
-    from dataclasses import replace
-
     _run(cfg, ctx, fake_runner)
     assert not any("--force-recreate" in c for c in fake_runner.calls)
     fake_runner.calls.clear()
@@ -303,8 +279,6 @@ def test_changed_caddyfile_recreates_caddy(cfg, ctx, fake_runner):
 
 
 def test_no_extra_file_without_overrides(cfg, ctx, fake_runner):
-    from dataclasses import replace
-
     (ctx.work_dir / "compose.extra.yml").write_text("stale")
     cfg = replace(cfg, preview=replace(cfg.preview, overrides={}))
     assert _run(cfg, ctx, fake_runner).ok

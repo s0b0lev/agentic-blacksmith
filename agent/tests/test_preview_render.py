@@ -7,7 +7,6 @@ import yaml
 
 from blacksmith.config import Route, load_config
 from blacksmith.preview import (
-    BasicAuth,
     compose_service_names,
     render_extra,
     render_caddyfile,
@@ -108,7 +107,7 @@ def test_override_has_caddy_service_publishing_only_80_443(preview):
 
 
 def test_caddyfile_routes_in_order_with_rewrite(preview):
-    out = render_caddyfile(preview, "pr-1.example.com", None)
+    out = render_caddyfile(preview, "pr-1.example.com")
     admin = out.index("    handle /admin* {\n        reverse_proxy admin:3000\n    }\n")
     media = out.index(
         "    handle /media/* {\n        uri strip_prefix /media\n"
@@ -120,20 +119,16 @@ def test_caddyfile_routes_in_order_with_rewrite(preview):
     assert out.endswith("}\n")
 
 
-def test_caddyfile_basic_auth_block_first_when_auth(preview):
-    out = render_caddyfile(preview, "h.example.com", BasicAuth("bob", "$2a$hash"))
-    assert out.startswith("h.example.com {\n    basic_auth {\n        bob $2a$hash\n    }\n")
-    assert out.index("basic_auth") < out.index("handle")
-
-
-def test_caddyfile_no_auth_block_when_none(preview):
-    assert "basic_auth" not in render_caddyfile(preview, "h.example.com", None)
+def test_caddyfile_starts_with_the_routes_and_has_no_auth(preview):
+    out = render_caddyfile(preview, "h.example.com")
+    assert out.startswith("h.example.com {\n    handle /admin* {\n")
+    assert "basic_auth" not in out
 
 
 def test_caddyfile_rejects_unsupported_rewrite(preview):
     bad = replace(preview, routes=(Route(path="/a/*", to="a:1", rewrite="/a/* -> /b/*"),))
     with pytest.raises(ValueError, match="/a/\\* -> /b/\\*"):
-        render_caddyfile(bad, "h", None)
+        render_caddyfile(bad, "h")
 
 
 def test_service_names_from_real_compose():

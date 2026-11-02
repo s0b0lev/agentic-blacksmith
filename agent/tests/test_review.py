@@ -137,7 +137,7 @@ def test_round_pushes_and_redeploys(tmp_path):
 
 def test_round_unchanged_preview_not_reposted(tmp_path):
     e = prepare(tmp_path, round=2)
-    meta = {"url": UP.url, "host": "pr-7.example.com", "auth": list(UP.auth)}
+    meta = {"url": UP.url, "host": "pr-7.example.com", "login": dataclasses.asdict(UP.login)}
     (e.ctx.work_dir / "preview.json").write_text(json.dumps(meta))
     assert go(e) is True
     assert [u[1] for u in e.gh.upserts] == ["round-3"]

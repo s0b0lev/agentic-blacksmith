@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from blacksmith.claude import StageResult
 from blacksmith.config import load_config
 from blacksmith.github import PR, Issue
-from blacksmith.preview import PreviewResult
+from blacksmith.preview import Login, PreviewResult
 from blacksmith.runner import CommandResult
 from blacksmith.stages import RunContext, load_prompt, run_first_pass
 from blacksmith.state import load_state
@@ -15,7 +15,7 @@ from conftest import FakeRunner
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples/sample-shop/blacksmith.yml"
 PROMPTS = ("plan", "build", "preview_fix", "verify", "build_fix", "design", "pr")
 NOW = "2026-10-23T12:00:00+00:00"
-UP = PreviewResult(True, "https://pr-7.example.com/", ("preview", "pw123"), None, "")
+UP = PreviewResult(True, "https://pr-7.example.com/", Login("preview", "pw123", None), None, "")
 DOWN = PreviewResult(False, "https://pr-7.example.com/", None, "up app failed", "== logs ==\nboom")
 PYTEST = "bash -lc cd api && .venv/bin/pytest -q"
 RUFF = "bash -lc cd api && .venv/bin/ruff check"
@@ -84,7 +84,8 @@ class FakeDeploy:
         self.calls += 1
         res = self.results.pop(0) if len(self.results) > 1 else self.results[0]
         if res.ok:
-            meta = {"url": res.url, "host": pctx.host, "auth": list(res.auth) if res.auth else None}
+            meta = {"url": res.url, "host": pctx.host,
+                    "login": dataclasses.asdict(res.login) if res.login else None}
             (pctx.work_dir / "preview.json").write_text(json.dumps(meta))
         return res
 
@@ -337,7 +338,7 @@ def test_pr_body_contains_preview_url_and_login(tmp_path):
     body = pr["body"]
     assert body.startswith("Closes #7\n\nAdds the widget.")
     assert "---\n**Preview:** https://pr-7.example.com/\n" in body
-    assert "**Preview login:** `preview` / `pw123`" in body
+    assert "**Preview login:** `preview` / `pw123`\n" in body
     assert ("<details><summary>Verification</summary>\n\n"
             "RESULT: pass\nAll acceptance criteria met.\n") in body
     assert "<details><summary>Design check</summary>\n\nNo mismatches." in body
@@ -393,7 +394,7 @@ def test_load_prompt_keeps_unknown_braces(tmp_path):
     e = make_env(tmp_path)
     (e.ctx.prompts_dir / "x.md").write_text(
         "Issue {issue} on {branch} at {host}, notes in {work_dir}.\n"
-        "Preview {preview_url} ({preview_auth}). Extra: {diag}\n"
+        "Preview {preview_url} ({preview_login}). Extra: {diag}\n"
         '```js\nconst x = {a: 1}; f({"k": 2}); {} {{ {unknown}\n```\n'
     )
     text = load_prompt(e.ctx.prompts_dir, "x", e.ctx, {"diag": "D"})
@@ -406,10 +407,15 @@ def test_load_prompt_keeps_unknown_braces(tmp_path):
 def test_load_prompt_reads_preview_json(tmp_path):
     e = make_env(tmp_path)
     e.ctx.work_dir.mkdir()
-    meta = {"url": "https://pr-7.example.com/", "auth": ["preview", "pw"]}
+    login = {"user": "preview", "password": "pw", "url": None}
+    meta = {"url": "https://pr-7.example.com/", "login": login}
     (e.ctx.work_dir / "preview.json").write_text(json.dumps(meta))
-    (e.ctx.prompts_dir / "x.md").write_text("{preview_url} {preview_auth}")
+    (e.ctx.prompts_dir / "x.md").write_text("{preview_url} {preview_login}")
     assert load_prompt(e.ctx.prompts_dir, "x", e.ctx) == "https://pr-7.example.com/ preview / pw"
+    login["url"] = "https://pr-7.example.com/admin/login"
+    (e.ctx.work_dir / "preview.json").write_text(json.dumps(meta))
+    assert load_prompt(e.ctx.prompts_dir, "x", e.ctx) == (
+        "https://pr-7.example.com/ preview / pw (login page: https://pr-7.example.com/admin/login)")
 
 
 def test_pr_screenshot_links_rewritten(tmp_path):
@@ -633,3 +639,15 @@ def test_label_time_lookup_failure_is_logged_not_fatal(tmp_path):
     assert "| **total** | **2m 00s** |" in final and "From the label" not in final
     assert "labeled_at lookup failed: RuntimeError('events api down')" in (
         e.ctx.work_dir / "log.md").read_text()
+
+
+def test_pr_body_names_the_login_page_when_known(tmp_path):
+    from blacksmith.stages import _preview_section
+
+    e = make_env(tmp_path)
+    e.ctx.work_dir.mkdir()
+    login = {"user": "a@b.c", "password": "pw", "url": "https://pr-7.example.com/admin/login"}
+    (e.ctx.work_dir / "preview.json").write_text(json.dumps({"url": "https://pr-7.example.com/", "login": login}))
+    assert _preview_section(e.ctx.work_dir) == (
+        "**Preview:** https://pr-7.example.com/\n"
+        "**Preview login:** `a@b.c` / `pw` at https://pr-7.example.com/admin/login")

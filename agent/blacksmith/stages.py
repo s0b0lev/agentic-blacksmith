@@ -76,18 +76,25 @@ def _preview_meta(work_dir: Path) -> dict | None:
         return None
 
 
+def _login_text(login: Mapping | None) -> str:
+    """``user / password``, with the login page when known; ``none`` without an admin."""
+    if not login:
+        return "none"
+    text = f"{login['user']} / {login['password']}"
+    return f"{text} (login page: {login['url']})" if login.get("url") else text
+
+
 def load_prompt(prompts_dir: Path, name: str, ctx: RunContext,
                 extra: Mapping[str, str] = {}) -> str:
     """Fill ``{name}`` placeholders we know; every other brace survives verbatim."""
     meta = _preview_meta(ctx.work_dir) or {}
-    auth = meta.get("auth")
     values = {
         "issue": str(ctx.issue),
         "branch": ctx.branch,
         "host": ctx.host,
         "work_dir": str(ctx.work_dir),
         "preview_url": meta.get("url") or "none",
-        "preview_auth": f"{auth[0]} / {auth[1]}" if auth else "none",
+        "preview_login": _login_text(meta.get("login")),
         **extra,
     }
     text = (prompts_dir / f"{name}.md").read_text()
@@ -214,7 +221,7 @@ def stage_preview(cfg, ctx, gh, run, state, env) -> None:
     if not res.ok:
         raise StageFailed(f"preview failed after {MAX_PREVIEW_FIXES} fix attempts: {res.error}")
     text = f"Preview is up at {res.url}"
-    login = f"login: {res.auth[0]} / {res.auth[1]}" if res.auth else ""
+    login = f"login: {res.login.user} / {res.login.password}" if res.login else ""
     if login:
         text += "\n" + login
     _milestone(gh, ctx, state, env, text)
@@ -298,9 +305,12 @@ def _preview_section(work_dir: Path, dashboard_url: str = "") -> str:
     lines = []
     if meta:
         lines.append(f"**Preview:** {meta['url']}")
-        if meta.get("auth"):
-            user, password = meta["auth"]
-            lines.append(f"**Preview login:** `{user}` / `{password}`")
+        login = meta.get("login")
+        if login:
+            line = f"**Preview login:** `{login['user']}` / `{login['password']}`"
+            if login.get("url"):
+                line += f" at {login['url']}"
+            lines.append(line)
     if dashboard_url:
         lines.append(f"**Live dashboard:** {dashboard_url}")
     return "\n".join(lines)

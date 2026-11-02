@@ -158,3 +158,13 @@ def test_state_bucket_script_rejects_bad_arguments(args):
 
 def test_adopting_mentions_state_bucket_script():
     assert "create-state-bucket.sh" in ADOPTING.read_text()
+
+
+def test_docs_describe_the_admin_login_not_basic_auth():
+    adopting = ADOPTING.read_text()
+    for needle in ("`admin`", "`create`", "`password`", "`login`",
+                   "BLACKSMITH_ADMIN_USER", "BLACKSMITH_ADMIN_PASSWORD", "every deploy"):
+        assert needle in adopting, needle
+    for name in ("README.md", "docs/adopting.md", "docs/operations.md", "docs/e2e-checklist.md"):
+        low = (REPO / name).read_text().lower()
+        assert "basic auth" not in low and "basic-auth" not in low and "basic_auth" not in low, name

@@ -5,8 +5,8 @@ This page is for engineers deciding whether to use this template in their own re
 Agentic blacksmith turns a GitHub issue into a pull request. You add a label to an issue. A
 GitHub Actions workflow creates a DigitalOcean droplet for that issue. On the droplet, Claude
 Code plans the change, builds it, starts a live preview of your app with Docker Compose,
-runs your checks, and opens a pull request with screenshots and a preview link behind basic
-auth.
+runs your checks, and opens a pull request with screenshots, a preview link and the admin
+login the agent verified it with.
 
 Review comments on that pull request start fix rounds: the agent replies to each comment and
 pushes a commit. Closing the pull request (or the issue) destroys the droplet. Nothing runs on your laptop,

@@ -29,8 +29,9 @@ example, `first_run_minutes: 120` and `review_round_minutes: 45`; adjust them if
       (public repository) showing "Runner events" within ~10 minutes.
 - [ ] Within ~10 minutes: the issue's progress comment ("**Blacksmith** is working on this
       issue on branch `blacksmith/issue-<n>`") shows a `### Plan` section.
-- [ ] Within ~15–20 minutes: the preview URL answers with a basic-auth prompt, and the
-      progress comment shows "Preview is up at ..." with a login that works.
+- [ ] Within ~15–20 minutes: the preview URL opens without a password prompt, and the
+      progress comment shows "Preview is up at ..." with an admin login that works on the
+      app's login page.
 - [ ] Within 120 minutes (the first-run budget): a pull request from `blacksmith/issue-<n>`
       is open, not a draft, with the preview URL, login, a Verification section and
       screenshots that render.

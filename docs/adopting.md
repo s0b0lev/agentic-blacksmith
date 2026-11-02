@@ -382,10 +382,11 @@ in a login shell. Each line is a separate shell, so `cd` does not carry over; wr
 starting the databases your tests need. A failure counts as a failed required check.
 
 **What verify looks at.** The verify stage screenshots every screen the change touches,
-including screens behind a login: it looks for the development credentials your repository
-documents or seeds (README, docs, seed scripts, env examples) and logs in through the real
-form with a browser helper that keeps the session. Document the seeded login somewhere the
-agent can find it, or those screens are reported as not verified.
+including screens behind a login: it logs in through the real form with the admin user from
+`preview.admin` (below), using a browser helper that keeps the session. Without an `admin`
+block it falls back to the development credentials your repository documents or seeds
+(README, docs, seed scripts, env examples); if it finds none, those screens are reported as
+not verified.
 
 **`checks`.** What the verify stage must run. Each item is a command string, or a mapping with
 `run` and `soft`. A failing required check sends the agent back to fix the code (at most two
@@ -414,7 +415,7 @@ publishes ports 80 and 443 and routes to your services.
   resolve there, as they do when you run `docker compose -f <compose>` yourself). Values that
   are empty or `change-me`, `changeme` or `CHANGE_ME` are replaced with random strings. They
   are generated once per droplet and reused on every later deploy, so database volumes keep
-  working; the basic-auth password is reused the same way.
+  working; a generated admin password is reused the same way.
 - `env`: values written to `.env` after that, overriding the example. `${PREVIEW_HOST}` is
   replaced with the preview hostname.
 - `infra`: services started first (databases, caches, object storage), before `seed`.
@@ -433,8 +434,16 @@ publishes ports 80 and 443 and routes to your services.
   `config.hosts`) see every preview POST as cross-origin otherwise, because the proxy
   terminates TLS: logins, carts and checkouts then answer 400 or 403 on the preview while
   production works. Allow the preview host from that build argument.
-- `auth` (default `basic`): `basic` puts the whole preview behind HTTP basic auth with user
-  `preview` and a random password; `none` turns it off.
+- `admin`: the admin user the verify agent, the design stage and your reviewers log in with.
+  `user` (default `blacksmith`) names it. `create` is a shell command that makes it exist: it
+  runs after the stack is up and the `ready` URL answers, on every deploy, in the compose
+  file's directory with `docker compose` pointed at the preview stack (like `seed`), and with
+  `BLACKSMITH_ADMIN_USER` and `BLACKSMITH_ADMIN_PASSWORD` in its environment. The password is
+  generated once per droplet and reused on later deploys, so the command must succeed when
+  the user already exists. A non-zero exit fails the preview like a failed seed. If your seed
+  already creates the admin, give its fixed `password` instead of `create`. `login` is the
+  login page (a path such as `/admin/login`, or a full URL); it is passed to the agent and
+  shown next to the credentials. At least one of `create` or `password` is required.
 
 **`design`.** `figma` (default `false`) enables the design stage, and `paths` lists path
 prefixes (such as `storefront/`) whose changes trigger it. See step 6.
@@ -517,9 +526,9 @@ run: if Alloy cannot be set up, bootstrap logs a warning and continues.
 
 ## 11. Warnings
 
-- The preview is public on the internet. Only basic auth protects it, and the username and
-  password are in the pull request body and the issue's progress comment, so anyone who can
-  read the repository can open the preview.
+- The preview is public on the internet: anyone with the URL can open it. The admin login
+  is in the pull request body and the issue's progress comment, so anyone who can read the
+  repository can sign in to the preview's admin.
 - Seed data and integrations are used as-is. Nothing forces sandbox mode. If your
   `env_example`, `env` or seed script points at real payment, email or SMS providers, the
   preview uses them.

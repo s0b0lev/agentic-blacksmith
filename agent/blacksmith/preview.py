@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import yaml
@@ -317,6 +317,23 @@ def _out(res: CommandResult) -> str:
     return res.stdout + res.stderr
 
 
+def _compose_shell(preview: Preview, files: list[Path], compose_path: Path, command: str,
+                   exports: Mapping[str, str] = {}) -> list[str]:
+    """A login shell running ``command`` in the compose file's directory against the stack."""
+    q = shlex.quote
+    compose_file = ":".join(str(f) for f in files)
+    env = {**exports, "COMPOSE_PROJECT_NAME": preview.project, "COMPOSE_FILE": compose_file,
+           "COMPOSE_PATH_SEPARATOR": ":"}
+    exported = " ".join(f"{k}={q(v)}" for k, v in env.items())
+    return ["bash", "-lc", f"export {exported} && cd {q(str(compose_path.parent))} && {command}"]
+
+
+def _login_url(host: str, login: str | None) -> str | None:
+    if login is None:
+        return None
+    return login if login.startswith("http") else f"https://{host}{login}"
+
+
 def deploy(
     cfg: Config,
     ctx: PreviewContext,
@@ -343,7 +360,16 @@ def deploy(
     env_path, generated, caddy_changed = _write_inputs(
         preview, ctx, compose_path, rand, existing_env
     )
-    _save_secrets(ctx.work_dir, {"env_values": generated})
+    secrets_out: dict = {"env_values": generated}
+    login: Login | None = None
+    if preview.admin:
+        password = preview.admin.password
+        if password is None:  # generated once per droplet, reused on every later deploy
+            saved = stored.get("admin_password")
+            password = saved if isinstance(saved, str) and saved else rand()
+            secrets_out["admin_password"] = password
+        login = Login(preview.admin.user, password, _login_url(ctx.host, preview.admin.login))
+    _save_secrets(ctx.work_dir, secrets_out)
 
     # No --project-directory: compose resolves .env, env_file and relative paths
     # against the first file's directory, the same for `up` and for the seed.
@@ -359,12 +385,7 @@ def deploy(
     if preview.infra:
         steps.append(("up infra", base + up + list(preview.infra), 1800))
     if preview.seed:
-        q = shlex.quote
-        compose_file = ":".join(str(f) for f in files)
-        env = (f"export COMPOSE_PROJECT_NAME={q(preview.project)} "
-               f"COMPOSE_FILE={q(compose_file)} COMPOSE_PATH_SEPARATOR=: "
-               f"&& cd {q(str(compose_path.parent))} && {preview.seed}")  # fmt: skip
-        steps.append(("seed", ["bash", "-lc", env], 900))
+        steps.append(("seed", _compose_shell(preview, files, compose_path, preview.seed), 900))
     steps.append(("up", base + up, 1800))
     if caddy_changed:
         recreate = ["up", "-d", "--no-deps", "--force-recreate", "caddy"]
@@ -380,7 +401,16 @@ def deploy(
         error = f"ready probe timed out after {ready_timeout_s}s (last status {last})"
         return _fail(run, base, ctx.repo_root, "ready", error, error, url)
 
-    login: Login | None = None
-    meta = {"url": url, "host": ctx.host, "login": None, "env_path": str(env_path)}
+    if preview.admin and preview.admin.create and login:
+        # After the stack answers, so the command may call the running app or the database.
+        exports = {"BLACKSMITH_ADMIN_USER": login.user, "BLACKSMITH_ADMIN_PASSWORD": login.password}
+        cmd = _compose_shell(preview, files, compose_path, preview.admin.create, exports)
+        res = run(cmd, cwd=ctx.repo_root, timeout=600)
+        if res.code != 0:
+            error = f"admin failed (exit {res.code})"
+            return _fail(run, base, ctx.repo_root, "admin", _out(res), error, url)
+
+    meta = {"url": url, "host": ctx.host, "env_path": str(env_path),
+            "login": asdict(login) if login else None}  # fmt: skip
     (ctx.work_dir / "preview.json").write_text(json.dumps(meta, indent=2))
     return PreviewResult(True, url, login, None, "")

@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from blacksmith.config import load_config
-from blacksmith.preview import PreviewContext, deploy
+from blacksmith.config import Admin, load_config
+from blacksmith.preview import Login, PreviewContext, deploy
 from blacksmith.runner import CommandResult
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples/sample-shop/blacksmith.yml"
@@ -45,6 +45,11 @@ def cfg():
     # Without the admin block: Task 3's admin tests use ``admin_cfg``.
     sample = load_config(EXAMPLE)
     return replace(sample, preview=replace(sample.preview, admin=None))
+
+
+@pytest.fixture
+def admin_cfg():
+    return load_config(EXAMPLE)
 
 
 @pytest.fixture
@@ -292,3 +297,69 @@ def test_extra_file_written_and_passed_last(cfg, ctx, fake_runner):
     up = fake_runner.calls[-1]
     files = [up[i + 1] for i, a in enumerate(up) if a == "-f"]
     assert files[-1] == str(ctx.work_dir / "compose.extra.yml")
+
+
+def _admin_calls(fake_runner):
+    return [c for c in fake_runner.calls if c[0] == "bash" and "BLACKSMITH_ADMIN_USER=" in c[2]]
+
+
+def test_admin_create_runs_after_ready_with_credentials(admin_cfg, ctx, fake_runner):
+    result = _run(admin_cfg, ctx, fake_runner)
+    assert result.ok, result.error
+    admin = admin_cfg.preview.admin
+    (call,) = _admin_calls(fake_runner)
+    assert fake_runner.calls[-1] == call  # after the final `up`
+    assert fake_runner.kwargs[-1]["timeout"] == 600
+    script = call[2]
+    assert script.startswith(
+        f"export BLACKSMITH_ADMIN_USER={shlex.quote(admin.user)} BLACKSMITH_ADMIN_PASSWORD=rnd "
+        "COMPOSE_PROJECT_NAME=blacksmith-preview COMPOSE_FILE=")
+    assert script.endswith(f"&& cd {shlex.quote(str(ctx.repo_root / 'ops'))} && {admin.create}")
+    assert result.login == Login(admin.user, "rnd", f"https://{HOST}/admin/login")
+    meta = json.loads((ctx.work_dir / "preview.json").read_text())
+    assert meta["login"] == {"user": admin.user, "password": "rnd", "url": f"https://{HOST}/admin/login"}
+    secrets = json.loads((ctx.work_dir / "preview-secrets.json").read_text())
+    assert secrets["admin_password"] == "rnd"
+
+
+def test_admin_create_failure_returns_diagnostics(admin_cfg, ctx, fake_runner):
+    base = _base(admin_cfg, ctx)
+    fake_runner.responses["bash -lc export BLACKSMITH_ADMIN_USER="] = CommandResult(2, "", "no such user table")
+    fake_runner.responses[" ".join(base + ["ps"])] = CommandResult(0, "PS-OUT", "")
+    fake_runner.responses[" ".join(base + ["logs"])] = CommandResult(0, "LOG-OUT", "")
+    result = _run(admin_cfg, ctx, fake_runner)
+    assert result.ok is False and result.login is None
+    assert result.error == "admin failed (exit 2)"
+    assert "== admin ==\nno such user table" in result.diagnostics
+    assert "PS-OUT" in result.diagnostics and "LOG-OUT" in result.diagnostics
+    assert not (ctx.work_dir / "preview.json").exists()
+
+
+def test_seeded_admin_password_is_used_without_create(admin_cfg, ctx, fake_runner):
+    admin = Admin("a@b.c", "fixed", None, None)
+    cfg = replace(admin_cfg, preview=replace(admin_cfg.preview, admin=admin))
+    result = _run(cfg, ctx, fake_runner)
+    assert result.ok and _admin_calls(fake_runner) == []
+    assert result.login == Login("a@b.c", "fixed", None)
+    secrets = json.loads((ctx.work_dir / "preview-secrets.json").read_text())
+    assert "admin_password" not in secrets
+
+
+def test_login_url_is_kept_when_absolute(admin_cfg, ctx, fake_runner):
+    admin = replace(admin_cfg.preview.admin, login="https://other.example.com/login")
+    cfg = replace(admin_cfg, preview=replace(admin_cfg.preview, admin=admin))
+    assert _run(cfg, ctx, fake_runner).login.url == "https://other.example.com/login"
+
+
+def test_second_deploy_reuses_admin_password(admin_cfg, ctx, fake_runner):
+    counter = iter(range(100))
+
+    def deploy_once():
+        clock = Clock()
+        return deploy(admin_cfg, ctx, fake_runner, http_get=lambda u: 200,
+                      sleep=clock.sleep, clock=clock, rand=lambda: f"r{next(counter)}")
+
+    first, second = deploy_once(), deploy_once()
+    assert first.ok and second.ok
+    assert first.login == second.login
+    assert len(_admin_calls(fake_runner)) == 2  # create runs on every deploy

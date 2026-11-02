@@ -10,7 +10,6 @@ from typing import Any
 import yaml
 
 _TARGET = re.compile(r"^[a-z0-9_-]+:\d+$")
-_AUTH = ("basic", "none")
 
 
 class ConfigError(ValueError):
@@ -66,6 +65,16 @@ class Observability:
 
 
 @dataclass(frozen=True)
+class Admin:
+    """The preview's admin user: who it is, how it comes to exist, where to log in."""
+
+    user: str
+    password: str | None  # fixed (seeded) password; None means generated per droplet
+    create: str | None  # shell command run after the stack is ready
+    login: str | None  # login page: a path on the preview host or a URL
+
+
+@dataclass(frozen=True)
 class Preview:
     compose: str
     project: str
@@ -80,7 +89,7 @@ class Preview:
     seed: str | None
     routes: tuple[Route, ...]
     ready: str
-    auth: str
+    admin: Admin | None
 
 
 @dataclass(frozen=True)
@@ -247,14 +256,26 @@ def _reset(ctx: _Ctx, raw: Any) -> dict[str, tuple[str, ...]]:
     return {k: tuple(v) for k, v in raw.items()}
 
 
+def _admin(ctx: _Ctx, raw: Any) -> Admin | None:
+    """``preview.admin``: at least one of ``create`` or ``password`` must set the password."""
+    if raw is None:
+        return None
+    d = ctx.section(raw, "preview.admin", {"user", "password", "create", "login"})
+    admin = Admin(
+        user=ctx.string(d, "user", "preview.admin", default="blacksmith") or "blacksmith",
+        password=ctx.string(d, "password", "preview.admin"),
+        create=ctx.string(d, "create", "preview.admin"),
+        login=ctx.string(d, "login", "preview.admin"),
+    )
+    if admin.create is None and admin.password is None:
+        ctx.err("preview.admin", "needs create or password")
+    return admin
+
+
 def _preview(ctx: _Ctx, raw: Any) -> Preview:
     allowed = {"compose", "project", "build", "images", "overrides", "reset", "drop",
-               "env_example", "env", "infra", "seed", "routes", "ready", "auth"}
+               "env_example", "env", "infra", "seed", "routes", "ready", "admin"}
     d = ctx.section(raw, "preview", allowed, required=True)
-    auth = ctx.string(d, "auth", "preview", default="basic")
-    if auth not in _AUTH:
-        ctx.err("preview.auth", f"must be one of {', '.join(_AUTH)}")
-        auth = "basic"
     return Preview(
         compose=ctx.string(d, "compose", "preview", default="", required=True) or "",
         project=ctx.string(d, "project", "preview", default="", required=True) or "",
@@ -269,7 +290,7 @@ def _preview(ctx: _Ctx, raw: Any) -> Preview:
         seed=ctx.string(d, "seed", "preview"),
         routes=_routes(ctx, d.get("routes")),
         ready=ctx.string(d, "ready", "preview", default="https://${PREVIEW_HOST}/") or "",
-        auth=auth,
+        admin=_admin(ctx, d.get("admin")),
     )
 
 

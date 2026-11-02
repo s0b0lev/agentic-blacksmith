@@ -65,7 +65,13 @@ preview:
     - { path: "/media/*", to: "minio:9000", rewrite: "/media/* -> /*" }
     - { path: "/*",       to: "storefront:3001" }
   ready: "https://${PREVIEW_HOST}/"    # URL that must return 2xx/3xx before "preview up"
-  auth: basic                          # Caddy basic auth; credentials generated per droplet, posted in the PR body
+  admin:                               # the admin user the verify agent (and reviewers) sign in with
+    user: admin@example.com
+    # Runs after the stack answers, on every deploy, with BLACKSMITH_ADMIN_USER and a
+    # BLACKSMITH_ADMIN_PASSWORD generated once per droplet; it must tolerate an existing user.
+    # If the seed already creates the admin, give its fixed `password` here instead of `create`.
+    create: docker compose run --rm api python scripts/create_superadmin.py --email "$BLACKSMITH_ADMIN_USER" --name Blacksmith --password "$BLACKSMITH_ADMIN_PASSWORD"
+    login: /admin/login                # where the login form lives; passed to the agent
 design:
   figma: true                     # enable the design-check stage when FIGMA_API_KEY is set
   paths: ["storefront/"]          # only changes under these paths trigger it

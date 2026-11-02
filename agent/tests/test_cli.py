@@ -305,8 +305,8 @@ def test_config_get_defaults_to_repo_config(tmp_path, capsys):
     (repo / "blacksmith.yml").write_text(EXAMPLE_YML.read_text())
     # only the keys cloud-init writes plus REPO_ROOT: no BRANCH or PREVIEW_HOST yet
     path.write_text(f"ISSUE=7\nREPO=o/r\nCONFIG_PATH=blacksmith.yml\nREPO_ROOT={repo}\n")
-    assert main(["--config-file", str(path), "config", "--get", "preview.auth"]) == 0
-    assert capsys.readouterr().out == "basic\n"
+    assert main(["--config-file", str(path), "config", "--get", "preview.ready"]) == 0
+    assert capsys.readouterr().out == "https://${PREVIEW_HOST}/\n"
 
 
 def test_fetch_issue_writes_issue_md(tmp_path, capsys, monkeypatch):

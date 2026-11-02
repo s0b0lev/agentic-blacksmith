@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from blacksmith.config import Check, ConfigError, load_config, parse_config
+from blacksmith.config import Admin, Check, ConfigError, load_config, parse_config
 
 EXAMPLE = Path(__file__).parents[2] / "examples/sample-shop/blacksmith.yml"
 
@@ -25,7 +25,7 @@ def test_loads_sample_example():
     assert cfg.preview.routes[1].rewrite == "/media/* -> /*"
     assert cfg.checks[0].soft is True
     assert cfg.checks[1] == Check(run="cd admin && npm run typecheck")
-    assert cfg.preview.auth == "basic"
+    assert cfg.preview.admin.create and cfg.preview.admin.login == "/admin/login"
     assert cfg.preview.images == {}
     assert cfg.preview.reset == {"minio": ("command", "healthcheck", "volumes")}
     assert cfg.preview.overrides["minio"]["image"] == "bitnamilegacy/minio:2025.4.22"
@@ -71,7 +71,7 @@ def test_defaults():
     assert cfg.setup == () and cfg.checks_setup == () and cfg.checks == ()
     assert cfg.design.figma is False and cfg.design.paths == ()
     assert cfg.preview.ready == "https://${PREVIEW_HOST}/"
-    assert cfg.preview.auth == "basic"
+    assert cfg.preview.admin is None
     assert cfg.preview.build == {} and cfg.preview.images == {}
     assert cfg.preview.overrides == {} and cfg.preview.reset == {}
     assert cfg.preview.drop == () and cfg.preview.infra == ()
@@ -102,13 +102,11 @@ def test_allowed_labelers_bad_type_rejected(bad):
 def test_errors_are_collected():
     data = minimal()
     del data["preview"]["compose"]
-    data["preview"]["auth"] = "oauth"
     data["preview"]["routes"].append({"path": "/x"})
     with pytest.raises(ConfigError) as exc:
         parse_config(data)
     lines = str(exc.value).splitlines()
     assert any(line.startswith("preview.compose:") for line in lines)
-    assert any(line.startswith("preview.auth:") for line in lines)
     assert "preview.routes[1].to: missing" in lines
 
 
@@ -213,3 +211,31 @@ def test_sample_example_has_observability_disabled_with_placeholders():
     obs = load_config(EXAMPLE).observability
     assert obs.enabled is False
     assert obs.loki_url.startswith("https://")
+
+
+def test_admin_defaults_and_fields():
+    data = minimal()
+    data["preview"]["admin"] = {"create": "x"}
+    assert parse_config(data).preview.admin == Admin("blacksmith", None, "x", None)
+
+
+def test_admin_with_seeded_password_and_login():
+    data = minimal()
+    data["preview"]["admin"] = {"user": "a@b.c", "password": "fixed", "login": "/admin/login"}
+    assert parse_config(data).preview.admin == Admin("a@b.c", "fixed", None, "/admin/login")
+
+
+def test_admin_needs_create_or_password():
+    data = minimal()
+    data["preview"]["admin"] = {"user": "a@b.c"}
+    with pytest.raises(ConfigError) as exc:
+        parse_config(data)
+    assert "preview.admin: needs create or password" in str(exc.value).splitlines()
+
+
+def test_preview_auth_key_is_rejected():
+    data = minimal()
+    data["preview"]["auth"] = "basic"
+    with pytest.raises(ConfigError) as exc:
+        parse_config(data)
+    assert "preview.auth: unknown key" in str(exc.value).splitlines()

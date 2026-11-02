@@ -2,10 +2,10 @@
 // Browser helper for the verify and design stages: drives the droplet's Chrome through
 // puppeteer-core with a persistent profile, so one login serves every later screenshot.
 //
-//   node browse.mjs --profile DIR [--auth user:pass] [--viewport WxH] [--timeout MS] steps.json
+//   node browse.mjs --profile DIR [--viewport WxH] [--timeout MS] steps.json
 //
 // steps.json is a list of single-key objects, run in order:
-//   {"goto": "https://host/path"}          open a page (basic auth from --auth applies)
+//   {"goto": "https://host/path"}          open a page
 //   {"fill": ["css", "value"]}             clear a field and type into it
 //   {"click": "css"}                       click; follows a navigation if one starts
 //   {"wait": "css" | 1500 | "navigation"}  wait for a selector, milliseconds, or the next load
@@ -26,7 +26,7 @@ const NAV_AFTER_CLICK_MS = 3_000;
 
 function usage(msg) {
   if (msg) console.error(msg);
-  console.error("usage: node browse.mjs --profile DIR [--auth user:pass] [--viewport WxH] [--timeout MS] steps.json");
+  console.error("usage: node browse.mjs --profile DIR [--viewport WxH] [--timeout MS] steps.json");
   process.exit(2);
 }
 
@@ -35,7 +35,7 @@ function parseArgs(argv) {
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--profile" || a === "--auth" || a === "--viewport" || a === "--timeout") {
+    if (a === "--profile" || a === "--viewport" || a === "--timeout") {
       if (i + 1 >= argv.length) usage(`${a} needs a value`);
       opts[a.slice(2)] = argv[++i];
     } else if (a.startsWith("--")) {
@@ -163,11 +163,6 @@ async function main() {
     const page = await browser.newPage();
     page.setDefaultTimeout(opts.timeout);
     await page.setViewport(parseViewport(opts.viewport));
-    if (opts.auth) {
-      const i = opts.auth.indexOf(":");
-      if (i < 1) usage("--auth must be user:pass");
-      await page.authenticate({ username: opts.auth.slice(0, i), password: opts.auth.slice(i + 1) });
-    }
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       let action;

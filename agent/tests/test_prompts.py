@@ -18,7 +18,7 @@ SKILLS = ("blacksmith-plan", "blacksmith-build", "blacksmith-verify",
 EXTRA = {"diagnostics": "D", "check_results": "C", "verify": "V", "comments": "M",
          "changed_files": "F", "pr_number": "12", "pr_url": "https://x/pull/12",
          "reply_marker": "<!-- r -->"}
-KNOWN = ("issue", "branch", "host", "work_dir", "preview_url", "preview_auth", *EXTRA)
+KNOWN = ("issue", "branch", "host", "work_dir", "preview_url", "preview_login", *EXTRA)
 # Skills and prompts stay project-neutral: they must not borrow names from the sample example.
 PROJECT_NAMES = ("sample-shop", "sampleshop", "acme")
 
@@ -132,3 +132,13 @@ def test_prompts_have_no_project_names():
     for name in ROLES:
         low = source(name).lower()
         assert not any(p in low for p in PROJECT_NAMES), name
+
+
+def test_prompts_carry_the_admin_login():
+    verify, design = source("verify"), source("design")
+    skill = (SKILLS_DIR / "blacksmith-verify" / "SKILL.md").read_text()
+    assert "{preview_login}" in verify and "{preview_login}" in design
+    for text in (verify, design, skill):
+        low = text.lower()
+        assert not any(p in low for p in ("--auth", "basic auth", "basic-auth", "user:password@")), text[:40]
+    assert "`none`" in verify  # what to do when no admin is provisioned

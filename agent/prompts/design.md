@@ -23,10 +23,10 @@ exactly the three headings below with `Figma MCP not available in this session.`
 - Fix clear mismatches only (wrong colour token, spacing, font size, missing element, copy).
   Leave matters of taste and anything the issue does not ask for.
 - To screenshot a page the shots do not cover: `node "$BLACKSMITH_BROWSE" --profile
-  {work_dir}/browser --auth 'user:password' steps.json` with `{{"goto": url}}` and
-  `{{"screenshot": file}}` steps (basic auth: {preview_auth}; the profile keeps the verify
-  stage's login). The preview is not redeployed after your fixes, so it shows the code
-  before them; do not retake screenshots to confirm a fix.
+  {work_dir}/browser steps.json` with `{{"goto": url}}` and `{{"screenshot": file}}` steps.
+  The profile keeps the verify stage's session; the admin login is {preview_login}. The
+  preview is not redeployed after your fixes, so it shows the code before them; do not
+  retake screenshots to confirm a fix.
 - Commit fixes with `git commit`. Never push; the runner pushes.
 
 ## Write

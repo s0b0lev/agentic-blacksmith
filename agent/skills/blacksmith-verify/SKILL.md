@@ -12,23 +12,24 @@ change meets the plan. You change no code and commit nothing.
 
 1. The plan's acceptance criteria and the issue.
 2. The check results table from the prompt. The runner ran the checks; do not run them again.
-3. The preview URL and basic-auth credentials from the prompt.
+3. The preview URL and the admin login from the prompt (user, password, login page).
 
 ## Method
 
 1. Checks: any required check marked FAIL means the result is fail. To explain a
    failure you may run the repository's own test command for that part, read-only.
-2. Browser: `node "$BLACKSMITH_BROWSE" --profile <scratch>/browser [--auth user:pass] steps.json`
+2. Browser: `node "$BLACKSMITH_BROWSE" --profile <scratch>/browser steps.json`
    runs a JSON list of steps (`goto`, `fill`, `click`, `wait`, `viewport`, `screenshot`,
    `dump`) in the binary named by `$BLACKSMITH_BROWSER`. The profile keeps cookies, so log
    in once and every later run is logged in. Never write credentials into the report.
 3. List every screen the change touches: from the changed files in the prompt, map each
    route, page, component and template to the screens that render it, and add the states
-   the acceptance criteria name. Screens behind a login count: find the development login
-   the repository documents or seeds (README, docs, seed scripts, env examples), log in
-   through the real form, and walk them. If no login can be found, say so in Findings.
+   the acceptance criteria name. Screens behind a login count: log in through the real
+   form with the admin login from the prompt, and walk them. When the prompt gives no admin
+   login, find the development login the repository documents or seeds (README, docs, seed
+   scripts, env examples). If no login can be found, say so in Findings.
 4. For each screen and each criterion, in order:
-   - open the page or call the endpoint that shows it (use `curl -u` for APIs);
+   - open the page or call the endpoint that shows it (use `curl` for APIs);
    - take a screenshot named `<nn>-<slug>.png` in the shots directory, `nn` from 01;
    - for any screen whose layout the change can affect, add `{"viewport": "390x844"}` and a
      `-mobile` slug;

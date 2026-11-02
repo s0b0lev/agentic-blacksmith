@@ -4,7 +4,6 @@ Runs only where Node, a Chrome/Chromium binary and ``agent/tools/node_modules`` 
 (``cd agent/tools && npm ci``); CI without them skips, the droplet has all three.
 """
 
-import base64
 import http.server
 import json
 import shutil
@@ -51,12 +50,6 @@ class App(http.server.BaseHTTPRequestHandler):
                 self._send(200, b"<h1>SECRET OK</h1>")
             else:
                 self._send(403, b"<h1>LOGIN REQUIRED</h1>")
-        elif self.path == "/basic":
-            want = "Basic " + base64.b64encode(b"u:p").decode()
-            if self.headers.get("Authorization") == want:
-                self._send(200, b"<h1>BASIC OK</h1>")
-            else:
-                self._send(401, b"nope", [("WWW-Authenticate", 'Basic realm="t"')])
         else:
             self._send(404, b"nope")
 
@@ -122,20 +115,22 @@ def test_session_persists_in_the_profile_between_runs(server, tmp_path):
     assert "SECRET OK" in dump.read_text()
 
 
-def test_basic_auth_and_viewport(server, tmp_path):
-    dump, shot = tmp_path / "basic.html", tmp_path / "02-basic-mobile.png"
+def test_viewport_sets_screenshot_size(server, tmp_path):
+    shot = tmp_path / "02-login-mobile.png"
     proc = browse(tmp_path, [
-        {"goto": f"{server}/basic"},
+        {"goto": f"{server}/login"},
         {"viewport": "390x844"},
         {"screenshot": str(shot)},
-        {"dump": str(dump)},
-    ], "--auth", "u:p")
+    ])
     assert proc.returncode == 0, proc.stderr
-    assert "BASIC OK" in dump.read_text()
     # PNG header: width and height big-endian at bytes 16..24
     head = shot.read_bytes()[:24]
     assert int.from_bytes(head[16:20], "big") == 390 and int.from_bytes(head[20:24], "big") == 844
 
+
+def test_auth_option_is_gone(server, tmp_path):
+    proc = browse(tmp_path, [{"goto": f"{server}/login"}], "--auth", "u:p")
+    assert proc.returncode == 2 and "unknown option --auth" in proc.stderr
 
 def test_failed_step_exits_nonzero_with_the_step_number(server, tmp_path):
     proc = browse(tmp_path, [{"goto": f"{server}/login"}, {"click": "#does-not-exist"}])
